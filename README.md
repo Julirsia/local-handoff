@@ -37,6 +37,9 @@ The skill carries the handoff-quality checks learned from external batch benchma
 - Phase Decomposition Rationale for split or intentionally unsplit work.
 - Hidden/Public Alignment so owner-only checks do not hide product requirements.
 - Checks for action branch coverage, report-field normalization, type boundaries, empty-state downstream effects, zero values, money rounding, response payload freshness, Python site-path isolation, JavaScript module type, and runner artifact leakage.
+- Spec lint before composition, so typos such as `critera` fail before creating a polished but incomplete package.
+- Embedded relevant code excerpts for target functions, types, helper APIs, and tests when local workers may not explore the repo reliably.
+- Worker capability guidance (`small`, `medium`, `large`), explicit anti-patterns, and a bounded self-repair loop.
 
 Runner-only result collection and final audit artifacts are intentionally excluded.
 
@@ -70,6 +73,21 @@ Give `/tmp/sample-handoff/lanes/<lane>/05-worker-prompt.md` or `/tmp/sample-hand
   "context": "repo and behavior context",
   "allowed_paths": ["src/example.py"],
   "forbidden_paths": ["pyproject.toml", "*.egg-info/**"],
+  "worker_capability": "small",
+  "relevant_files": [
+    {
+      "path": "src/example.py",
+      "why": "contains the target behavior",
+      "symbols": ["repair_target"],
+      "edit_allowed": "yes",
+      "excerpt": "def repair_target(...):\n    ..."
+    }
+  ],
+  "anti_patterns": [
+    "Do not invent imports or helper APIs; verify existing symbols first.",
+    "Do not edit tests to hide production failures.",
+    "Do not skip validation or report success without command output."
+  ],
   "criteria": [
     {
       "requirement": "required behavior",
@@ -104,6 +122,8 @@ Give `/tmp/sample-handoff/lanes/<lane>/05-worker-prompt.md` or `/tmp/sample-hand
 ```
 
 Add `lanes` for sequential smaller handoffs. Each lane may override objective, allowed paths, forbidden paths, criteria, boundaries, validation commands, and worker steps.
+
+Use `relevant_files` selectively. Excerpts cost frontier tokens during handoff creation, but they usually save more total work when a local worker would otherwise hallucinate APIs, miss existing return shapes, or repeatedly fail validation. For `worker_capability: "small"`, keep most lanes to five or fewer excerpts and split the task when more code context is required.
 
 ## Install for Codex
 

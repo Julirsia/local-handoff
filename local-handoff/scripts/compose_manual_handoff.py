@@ -12,6 +12,76 @@ from pathlib import Path
 from typing import Any
 
 
+ALLOWED_SPEC_KEYS = {
+    "acceptance",
+    "allowed_paths",
+    "allow_paths",
+    "anti_patterns",
+    "assumptions",
+    "boundaries",
+    "boundary_examples",
+    "constraints",
+    "context",
+    "conventions",
+    "criteria",
+    "dependency_policy",
+    "execution_plan",
+    "files",
+    "forbidden_paths",
+    "forbid_paths",
+    "hidden_public_alignment",
+    "in_scope",
+    "integration_checks",
+    "integration_objective",
+    "integration_validation",
+    "lanes",
+    "manual_checks",
+    "name",
+    "objective",
+    "out_of_scope",
+    "out_scope",
+    "owner_audit_alignment",
+    "owner_audit_notes",
+    "phase_decomposition_rationale",
+    "project",
+    "project_context",
+    "public_validation",
+    "relevant_files",
+    "repo",
+    "repo_root",
+    "scope",
+    "stop_conditions",
+    "task_name",
+    "validation_commands",
+    "worker_capability",
+    "worker_steps",
+    "working_directory",
+}
+
+ALLOWED_LANE_KEYS = ALLOWED_SPEC_KEYS | {"summary"}
+
+COMMON_KEY_TYPOS = {
+    "critera": "criteria",
+    "criterias": "criteria",
+    "boundries": "boundaries",
+    "boundarys": "boundaries",
+    "validation_command": "validation_commands",
+    "relevant_file": "relevant_files",
+    "anti_pattern": "anti_patterns",
+    "worker_capabilities": "worker_capability",
+}
+
+WORKER_CAPABILITIES = {"small", "medium", "large"}
+
+DEFAULT_ANTI_PATTERNS = [
+    "Do not invent imports, classes, helper functions, CLI flags, or API names. Verify existing symbols from the provided excerpts or by reading files.",
+    "Do not edit tests, fixtures, snapshots, or validation commands merely to hide production failures.",
+    "Do not broaden scope, reformat unrelated files, rename public APIs, or change package metadata unless explicitly required.",
+    "Do not skip validation or report success without the configured command output or an explicit blocked reason.",
+    "Do not continue after a stop condition; report blocked with the exact missing fact, path, or command.",
+]
+
+
 def slugify(value: str) -> str:
     value = value.strip().lower()
     value = re.sub(r"[^a-z0-9._-]+", "-", value)
@@ -75,6 +145,112 @@ def validation_block(commands: Any) -> str:
     return "\n\n".join(fenced_command(command) for command in values)
 
 
+def language_for_path(path: str) -> str:
+    suffix = Path(path).suffix.lower()
+    return {
+        ".py": "python",
+        ".js": "javascript",
+        ".jsx": "jsx",
+        ".ts": "typescript",
+        ".tsx": "tsx",
+        ".json": "json",
+        ".md": "markdown",
+        ".yml": "yaml",
+        ".yaml": "yaml",
+        ".sh": "bash",
+    }.get(suffix, "text")
+
+
+def code_fence(body: Any, language: str = "text") -> str:
+    cleaned = text(body, "").replace("```", "`` `")
+    if not cleaned:
+        return ""
+    return f"```{language}\n{cleaned}\n```"
+
+
+def render_relevant_files(files: Any) -> str:
+    values = as_list(files)
+    if not values:
+        return "- Not specified."
+
+    lines: list[str] = []
+    for item in values:
+        if isinstance(item, dict):
+            path = text(item.get("path") or item.get("file"), "FILL_BEFORE_HANDOFF: path")
+            why = text(item.get("why") or item.get("reason"), "Reason not specified.")
+            symbols = bullet(item.get("symbols") or item.get("functions") or item.get("classes"), "- Symbols not specified.")
+            edit_allowed = text(item.get("edit_allowed"), "Follow allowed paths.")
+            excerpt = text(item.get("excerpt") or item.get("snippet"), "")
+            language = text(item.get("language"), language_for_path(path))
+            block = [
+                f"### `{path}`",
+                "",
+                f"- Why it matters: {why}",
+                f"- Edit permission: {edit_allowed}",
+                "- Relevant symbols:",
+                symbols,
+            ]
+            if excerpt:
+                block.extend(["", code_fence(excerpt, language)])
+            else:
+                block.append("- Excerpt: Not embedded. Worker must read this file before editing.")
+            lines.append("\n".join(block))
+        else:
+            lines.append(f"- {text(item)}")
+    return "\n\n".join(lines)
+
+
+def normalized_worker_capability(data: dict[str, Any]) -> str:
+    value = text(data.get("worker_capability"), "medium").lower()
+    return value if value in WORKER_CAPABILITIES else "medium"
+
+
+def capability_guidance(capability: str) -> str:
+    guidance = {
+        "small": [
+            "Assume the worker is a weaker local model. Keep to one lane, one phase, and one validation loop at a time.",
+            "Prefer exact excerpts, exact file paths, and literal boundary examples over references to broader repo context.",
+            "After one scoped repair attempt on the same failing validation, stop and report blocked unless the fix is obvious within allowed paths.",
+        ],
+        "medium": [
+            "Assume the worker can follow a detailed plan but may miss constraints buried in the middle of a long prompt.",
+            "Keep critical paths, boundaries, validation, anti-patterns, and stop conditions near the top of the worker prompt.",
+            "After up to two scoped repair attempts on the same failing validation, stop and report blocked unless the user adds context.",
+        ],
+        "large": [
+            "Assume the worker can use broader context, but still keep implementation bounded to the stated files and evidence.",
+            "Do not remove front-loaded constraints; larger models still need exact acceptance and validation boundaries.",
+            "Repair only within scope and report blocked when requirements conflict or validation depends on missing prerequisites.",
+        ],
+    }
+    return bullet(guidance[capability])
+
+
+def self_repair_loop(capability: str) -> str:
+    if capability == "small":
+        repair_phrase = "one scoped repair attempt"
+    elif capability == "medium":
+        repair_phrase = "up to two scoped repair attempts"
+    else:
+        repair_phrase = "bounded scoped repair attempts"
+    return numbered(
+        [
+            "Make the smallest scoped change needed for the current acceptance criterion or boundary example.",
+            "Run the single most relevant configured validation command and capture its exit code and short output summary.",
+            f"If validation fails, inspect the failure and make {repair_phrase} only inside allowed paths.",
+            "Rerun the same validation after each repair attempt.",
+            "If the same failure persists, a prerequisite is missing, or a fix requires forbidden paths or broad refactoring, stop and report `blocked`.",
+        ]
+    )
+
+
+def anti_pattern_block(items: Any) -> str:
+    values = as_list(items)
+    if not values:
+        values = DEFAULT_ANTI_PATTERNS
+    return bullet(values)
+
+
 def criteria_rows(criteria: Any) -> tuple[str, str]:
     values = as_list(criteria)
     if not values:
@@ -135,6 +311,212 @@ def boundary_sections(boundaries: Any) -> tuple[str, str]:
     return "\n".join(boundary_lines), "\n".join(checklist_lines)
 
 
+def lint_spec_object(
+    data: dict[str, Any],
+    *,
+    label: str,
+    allowed_keys: set[str],
+    check_required: bool = True,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    errors: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    for key in sorted(data):
+        if key not in allowed_keys:
+            suggestion = f" Did you mean `{COMMON_KEY_TYPOS[key]}`?" if key in COMMON_KEY_TYPOS else ""
+            errors.append(
+                {
+                    "severity": "error",
+                    "code": "unknown_spec_key",
+                    "path": f"{label}.{key}",
+                    "message": f"Unknown spec key `{key}`.{suggestion}",
+                }
+            )
+
+    capability = data.get("worker_capability")
+    if capability is not None and text(capability).lower() not in WORKER_CAPABILITIES:
+        errors.append(
+            {
+                "severity": "error",
+                "code": "invalid_worker_capability",
+                "path": f"{label}.worker_capability",
+                "message": "worker_capability must be one of: small, medium, large.",
+            }
+        )
+
+    if check_required:
+        criteria = as_list(data.get("criteria") or data.get("acceptance"))
+        boundaries = as_list(data.get("boundaries") or data.get("boundary_examples"))
+        validation = as_list(data.get("validation_commands") or data.get("public_validation"))
+        if not criteria:
+            warnings.append(
+                {
+                    "severity": "warning",
+                    "code": "missing_spec_criteria",
+                    "path": label,
+                    "message": "Spec has no acceptance criteria; generated handoff will need manual completion.",
+                }
+            )
+        if not boundaries:
+            warnings.append(
+                {
+                    "severity": "warning",
+                    "code": "missing_spec_boundaries",
+                    "path": label,
+                    "message": "Spec has no boundary examples; weaker workers may infer edge behavior incorrectly.",
+                }
+            )
+        if not validation and not as_list(data.get("manual_checks")):
+            warnings.append(
+                {
+                    "severity": "warning",
+                    "code": "missing_spec_validation",
+                    "path": label,
+                    "message": "Spec has neither validation_commands nor manual_checks.",
+                }
+            )
+
+    relevant_files = as_list(data.get("relevant_files"))
+    excerpt_count = 0
+    for idx, item in enumerate(relevant_files, 1):
+        if not isinstance(item, dict):
+            continue
+        item_path = f"{label}.relevant_files[{idx}]"
+        if not text(item.get("path") or item.get("file"), ""):
+            errors.append(
+                {
+                    "severity": "error",
+                    "code": "missing_relevant_file_path",
+                    "path": item_path,
+                    "message": "Each relevant_files object must include path.",
+                }
+            )
+        if not text(item.get("why") or item.get("reason"), ""):
+            warnings.append(
+                {
+                    "severity": "warning",
+                    "code": "missing_relevant_file_why",
+                    "path": item_path,
+                    "message": "Each relevant file should say why it matters to the worker.",
+                }
+            )
+        excerpt = text(item.get("excerpt") or item.get("snippet"), "")
+        if excerpt:
+            excerpt_count += 1
+            line_count = len(excerpt.splitlines())
+            if line_count > 120:
+                warnings.append(
+                    {
+                        "severity": "warning",
+                        "code": "long_relevant_file_excerpt",
+                        "path": item_path,
+                        "message": f"Embedded excerpt has {line_count} lines; prefer the smallest complete function/type/test signature.",
+                    }
+                )
+    capability_name = normalized_worker_capability(data)
+    if capability_name == "small" and excerpt_count > 5:
+        warnings.append(
+            {
+                "severity": "warning",
+                "code": "too_many_excerpts_for_small_worker",
+                "path": label,
+                "message": "small worker capability should usually receive 5 or fewer embedded excerpts per lane.",
+            }
+        )
+    elif excerpt_count > 8:
+        warnings.append(
+            {
+                "severity": "warning",
+                "code": "too_many_relevant_file_excerpts",
+                "path": label,
+                "message": "Many embedded excerpts can dilute attention; split lanes or trim excerpts.",
+            }
+        )
+
+    anti_patterns = data.get("anti_patterns")
+    if anti_patterns is not None and not isinstance(anti_patterns, (str, list)):
+        errors.append(
+            {
+                "severity": "error",
+                "code": "invalid_anti_patterns",
+                "path": f"{label}.anti_patterns",
+                "message": "anti_patterns must be a string or list of strings.",
+            }
+        )
+    return errors, warnings
+
+
+def lint_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    errors, warnings = lint_spec_object(spec, label="$", allowed_keys=ALLOWED_SPEC_KEYS)
+    if not text(spec.get("objective"), "") and not as_list(spec.get("lanes")):
+        errors.append(
+            {
+                "severity": "error",
+                "code": "missing_spec_objective",
+                "path": "$.objective",
+                "message": "Spec must include objective unless every lane has its own objective.",
+            }
+        )
+    lanes = as_list(spec.get("lanes"))
+    if lanes and not isinstance(spec.get("lanes"), list):
+        errors.append(
+            {
+                "severity": "error",
+                "code": "invalid_lanes",
+                "path": "$.lanes",
+                "message": "lanes must be a list of objects.",
+            }
+        )
+    for idx, lane in enumerate(lanes, 1):
+        if not isinstance(lane, dict):
+            errors.append(
+                {
+                    "severity": "error",
+                    "code": "invalid_lane",
+                    "path": f"$.lanes[{idx}]",
+                    "message": "Each lane must be an object.",
+                }
+            )
+            continue
+        lane_label_text = f"$.lanes[{idx}]"
+        lane_errors, lane_warnings = lint_spec_object(
+            lane,
+            label=lane_label_text,
+            allowed_keys=ALLOWED_LANE_KEYS,
+            check_required=False,
+        )
+        errors.extend(lane_errors)
+        warnings.extend(lane_warnings)
+        merged = dict(spec)
+        merged.update(lane)
+        _, merged_required_warnings = lint_spec_object(
+            merged,
+            label=lane_label_text,
+            allowed_keys=ALLOWED_SPEC_KEYS | {"summary"},
+            check_required=True,
+        )
+        warnings.extend(
+            item
+            for item in merged_required_warnings
+            if item["code"] in {"missing_spec_criteria", "missing_spec_boundaries", "missing_spec_validation"}
+        )
+        if not text(lane.get("objective") or lane.get("summary"), ""):
+            warnings.append(
+                {
+                    "severity": "warning",
+                    "code": "missing_lane_objective",
+                    "path": f"$.lanes[{idx}]",
+                    "message": "Each lane should include objective or summary.",
+                }
+            )
+
+    return {
+        "status": "error" if errors else ("warning" if warnings else "ok"),
+        "error_count": len(errors),
+        "warning_count": len(warnings),
+        "issues": errors + warnings,
+    }
+
+
 def critical_first() -> str:
     return """# Critical Instructions First
 
@@ -154,6 +536,10 @@ def render_docs(spec: dict[str, Any], lane: dict[str, Any] | None = None) -> dic
     repo = text(data.get("repo") or data.get("repo_root") or data.get("working_directory"), "FILL_BEFORE_HANDOFF: repo path")
     objective = text(data.get("objective"))
     context = text(data.get("context") or data.get("project_context"))
+    worker_capability = normalized_worker_capability(data)
+    worker_guidance = capability_guidance(worker_capability)
+    anti_patterns = anti_pattern_block(data.get("anti_patterns"))
+    repair_loop = self_repair_loop(worker_capability)
     assumptions = bullet(data.get("assumptions"))
     conventions = bullet(data.get("conventions"))
     in_scope = bullet(data.get("in_scope") or data.get("scope"))
@@ -181,6 +567,7 @@ def render_docs(spec: dict[str, Any], lane: dict[str, Any] | None = None) -> dic
     )
     criteria_text, evidence_matrix = criteria_rows(data.get("criteria") or data.get("acceptance"))
     boundaries, boundary_checklist = boundary_sections(data.get("boundaries") or data.get("boundary_examples"))
+    relevant_files = render_relevant_files(data.get("relevant_files") or data.get("files"))
     dependency_policy = text(
         data.get("dependency_policy"),
         "Do not add dependencies, lockfiles, package metadata, or scaffolding unless the user explicitly permits it.",
@@ -199,7 +586,7 @@ Absolute path: `{repo}`
 
 ## Relevant Files, Modules, Tests, and Data Flow
 
-{bullet(data.get("relevant_files") or data.get("files"))}
+{relevant_files}
 
 ## Existing Conventions To Preserve
 
@@ -271,6 +658,28 @@ Follow this order. Do not infer a broader plan from nearby code.
 
 {implementation_steps}
 
+## Worker Capability
+
+Configured worker capability: `{worker_capability}`.
+
+{worker_guidance}
+
+## Weak-Worker Failure Modes To Prevent
+
+- Import/API hallucination: worker invents helpers or symbols instead of reading target files.
+- Scope creep: worker edits neighboring files, package metadata, tests, or generated artifacts outside the allowed paths.
+- Constraint burial: worker misses forbidden paths, boundary cases, or validation because they appear late in a long prompt.
+- Validation omission: worker reports success without running commands or naming why validation is blocked.
+- Step-order drift: worker implements downstream reporting before required normalization/defaulting or core state behavior.
+
+## Anti-Patterns
+
+{anti_patterns}
+
+## Self-Repair Loop
+
+{repair_loop}
+
 ## Local Model Guidance
 
 - Keep edits narrow and directly tied to acceptance criteria.
@@ -316,6 +725,16 @@ You are the implementation worker for this manually delegated task. Modify files
 
 {context}
 
+## Relevant Code Excerpts
+
+{relevant_files}
+
+## Worker Capability
+
+Configured worker capability: `{worker_capability}`.
+
+{worker_guidance}
+
 ## Allowed Paths
 
 {allowed}
@@ -339,6 +758,14 @@ You are the implementation worker for this manually delegated task. Modify files
 ## Validation Commands
 
 {validation}
+
+## Anti-Patterns
+
+{anti_patterns}
+
+## Self-Repair Loop
+
+{repair_loop}
 
 ## Stop Conditions
 
@@ -414,6 +841,13 @@ These gates preserve the benchmark-derived handoff checks without launching a ru
 - Split by phase when one lane combines normalization/defaulting, core algorithm/state transition, and aggregation/rendering/persistence/reporting.
 - For action/controller work, split storage/defaulting, mutation branch families, and report/filter aggregation when feasible.
 - For final wrapper/report lanes, state which upstream lanes are already accepted and how validation covers fresh downstream output.
+
+## Weak-Worker Guardrails
+
+- Embed the smallest complete code excerpts for target functions, type definitions, and relevant tests when the worker may not explore the repo well.
+- State worker capability as small, medium, or large and split lanes more aggressively for small workers.
+- Keep anti-patterns explicit: no guessed APIs, no scope broadening, no test-masking edits, no skipped validation.
+- Require the worker to use the self-repair loop before reporting completed or blocked.
 """,
     }
 
@@ -485,7 +919,7 @@ def count_words(path: Path) -> int:
     return len(re.findall(r"\S+", path.read_text(encoding="utf-8")))
 
 
-def compose(spec: dict[str, Any], out_dir: Path, force: bool) -> None:
+def compose(spec: dict[str, Any], out_dir: Path, force: bool, spec_lint: dict[str, Any] | None = None) -> None:
     if out_dir.exists() and not force:
         raise SystemExit(f"Output directory already exists: {out_dir}. Use --force to overwrite generated files.")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -537,6 +971,7 @@ def compose(spec: dict[str, Any], out_dir: Path, force: bool) -> None:
         "acceptance_criterion_count": len(all_criteria),
         "boundary_example_count": len(all_boundaries),
         "complex_logic_signals": [term for term in complex_terms if term in spec_text],
+        "spec_lint": spec_lint or lint_spec(spec),
         "files": [str(path.relative_to(out_dir)) for path in written],
     }
     write_file(out_dir / "compose-metrics.json", json.dumps(metrics, indent=2, ensure_ascii=False))
@@ -558,7 +993,13 @@ def main(argv: list[str] | None = None) -> int:
         print("Spec root must be a JSON object.", file=sys.stderr)
         return 2
 
-    compose(spec, args.out_dir, args.force)
+    spec_lint = lint_spec(spec)
+    if spec_lint["issues"]:
+        print(json.dumps(spec_lint, indent=2, ensure_ascii=False), file=sys.stderr)
+    if spec_lint["status"] == "error":
+        return 2
+
+    compose(spec, args.out_dir, args.force, spec_lint)
     print(f"Wrote manual handoff package: {args.out_dir}")
     return 0
 

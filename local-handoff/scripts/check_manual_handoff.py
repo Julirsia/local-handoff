@@ -119,6 +119,15 @@ def section_has_value(markdown: str, heading: str) -> bool:
     return bool(section and "not specified" not in section and "fill_before_handoff" not in section)
 
 
+def prompt_code_excerpt_section(prompt: str) -> str:
+    match = re.search(
+        r"(?is)^##\s+Relevant Code Excerpts\s*$([\s\S]*?)(?=^##\s+Worker Capability\s*$|^##\s+Allowed Paths\s*$|\Z)",
+        prompt,
+        flags=re.MULTILINE,
+    )
+    return match.group(1).strip() if match else ""
+
+
 def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     for name in CORE_FILES:
@@ -184,6 +193,8 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
         issues.append(issue("error", "package_relative_handoff_refs", "Worker prompt refers to repo-relative handoff files without being self-contained.", label))
     if "benchmark-derived boundary prompts" not in quality.lower():
         issues.append(issue("warning", "missing_benchmark_quality_gates", "07-handoff-quality-gates.md should include benchmark-derived boundary prompts.", label))
+    if "weak-worker guardrails" not in quality.lower() and "weak-worker failure modes" not in quality.lower():
+        issues.append(issue("warning", "missing_weak_worker_failure_modes", "Quality gates should name weak-worker failure modes and guardrails.", label))
 
     prompt_head = "\n".join(prompt.splitlines()[:20]).lower()
     if "critical instructions first" not in prompt_head:
@@ -197,6 +208,22 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
     ]:
         if term not in prompt.lower():
             issues.append(issue("error", code, f"Worker prompt missing {term}.", label))
+    for term, code, message in [
+        ("relevant code excerpts", "worker_prompt_missing_code_excerpts", "Worker prompt should include embedded code excerpts or an explicit excerpt/read-before-edit section."),
+        ("anti-patterns", "worker_prompt_missing_anti_patterns", "Worker prompt should include action-level anti-patterns for weaker local models."),
+        ("self-repair loop", "worker_prompt_missing_self_repair_loop", "Worker prompt should include a bounded change/validate/repair/blocked loop."),
+        ("worker capability", "worker_prompt_missing_worker_capability", "Worker prompt should state target worker capability: small, medium, or large."),
+    ]:
+        if term not in prompt.lower():
+            issues.append(issue("warning", code, message, label))
+    if "relevant code excerpts" in prompt.lower() and "```" not in prompt_code_excerpt_section(prompt) and section_has_value(task, "Allowed Paths"):
+        issues.append(issue("suggestion", "missing_embedded_code_excerpt_blocks", "Relevant Code Excerpts section has no fenced excerpts; embed target functions/types/tests when local exploration is weak.", label))
+    if "do not invent" not in prompt.lower() and "verify existing" not in prompt.lower():
+        issues.append(issue("warning", "missing_no_api_guessing_antipattern", "Anti-patterns should explicitly forbid guessed imports/APIs/symbols.", label))
+    if "tests" in combined_low and "hide production failures" not in prompt.lower() and "mask" not in prompt.lower():
+        issues.append(issue("warning", "missing_no_test_masking_antipattern", "Anti-patterns should forbid changing tests merely to hide production failures.", label))
+    if "blocked" not in markdown_section_text(prompt, "Self-Repair Loop").lower():
+        issues.append(issue("warning", "self_repair_loop_missing_blocked_exit", "Self-Repair Loop should tell the worker when to stop and report blocked.", label))
 
     if "worker step" not in plan.lower() and "implementation plan" not in plan.lower():
         issues.append(issue("suggestion", "consider_worker_step_plan", "Add an explicit ordered worker step plan.", label))

@@ -5,8 +5,13 @@ This file maps the runner-backed batch handoff safeguards to the manual Local Ha
 ## Fully Carried Over
 
 - Compact spec first, then generated documents.
+- Spec lint before composition, including unknown-key detection for acceptance/boundary typos.
 - Compose metrics for spec words, handoff words, expansion ratio, lane count, criterion count, boundary count, complex logic signals, and generated files.
 - Self-contained worker prompt.
+- Embedded relevant code excerpts for target functions, types, helper APIs, and tests when local exploration is weak.
+- Worker capability knob for small, medium, and large local models.
+- Explicit anti-patterns against guessed APIs, scope creep, test masking, skipped validation, and continuing past blockers.
+- Bounded self-repair loop: change, validate, scoped repair, rerun, completed or blocked.
 - Allowed and forbidden path scope.
 - Public Evidence Matrix.
 - Boundary Examples as executable product requirements.
@@ -41,6 +46,7 @@ The checker implements manual equivalents of benchmark/preflight signals:
 - `missing_public_boundary_assertion_checklist`
 - `missing_phase_decomposition_rationale`
 - `missing_hidden_public_alignment`
+- `unspecified_acceptance_content`
 - `missing_public_validation`
 - `missing_allow_paths`
 - `missing_forbid_paths`
@@ -53,12 +59,21 @@ The checker implements manual equivalents of benchmark/preflight signals:
 - `runner_artifact_reference`
 - `runner_artifact_present`
 - `missing_benchmark_quality_gates`
+- `missing_weak_worker_failure_modes`
 - `worker_prompt_not_front_loaded`
 - `worker_prompt_missing_allowed_paths`
 - `worker_prompt_missing_forbidden_paths`
 - `worker_prompt_missing_validation`
 - `worker_prompt_missing_stop_conditions`
 - `worker_prompt_missing_final_format`
+- `worker_prompt_missing_code_excerpts`
+- `worker_prompt_missing_anti_patterns`
+- `worker_prompt_missing_self_repair_loop`
+- `worker_prompt_missing_worker_capability`
+- `missing_embedded_code_excerpt_blocks`
+- `missing_no_api_guessing_antipattern`
+- `missing_no_test_masking_antipattern`
+- `self_repair_loop_missing_blocked_exit`
 - `validation_command_static_check_failed`
 - `python_import_path_gap`
 - `python_packaging_scope_gap`

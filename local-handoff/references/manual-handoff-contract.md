@@ -20,6 +20,21 @@ Common spec fields:
   "context": "repo and behavior context",
   "allowed_paths": ["src/example.py"],
   "forbidden_paths": ["pyproject.toml", "*.egg-info/**"],
+  "worker_capability": "small",
+  "relevant_files": [
+    {
+      "path": "src/example.py",
+      "why": "contains the target function and existing return shape",
+      "symbols": ["repair_target"],
+      "edit_allowed": "yes",
+      "excerpt": "def repair_target(...):\n    ..."
+    }
+  ],
+  "anti_patterns": [
+    "Do not invent imports or helper APIs; verify existing symbols first.",
+    "Do not edit tests to hide production failures.",
+    "Do not skip validation or report success without command output."
+  ],
   "criteria": [
     {
       "requirement": "required behavior",
@@ -56,6 +71,38 @@ Common spec fields:
 For multi-lane work, add `lanes`. Each lane may override `objective`, `allowed_paths`, `forbidden_paths`, `criteria`, `boundaries`, `validation_commands`, and `worker_steps`. Keep shared repo context at the top level.
 
 The composer writes `compose-metrics.json` with spec word count, generated handoff word count, expansion ratio, lane count, acceptance criterion count, boundary example count, complex logic signals, and generated file list. Use it to notice whether a compact spec is becoming too broad and should be split.
+
+The composer lints the compact spec before writing files. Unknown keys are errors because typos such as `critera` silently drop acceptance criteria. Warnings identify missing boundaries, missing validation, oversized excerpts, or too many excerpts for a small worker.
+
+### Relevant Code Excerpts
+
+Use `relevant_files` objects when the worker is a local model that may not explore the repo reliably. Embed only the smallest complete snippets the worker needs:
+
+- Target function or class body.
+- Related type/interface/dataclass definition.
+- Public test signature or assertion block.
+- Existing helper API that must be reused.
+
+Do not paste whole files by default. For `worker_capability: "small"`, keep most lanes to five or fewer excerpts and usually 20-80 lines per excerpt. If more code is needed, split the lane.
+
+### Worker Capability
+
+Set `worker_capability` to one of:
+
+- `small`: 7B-30B local model or weak repo exploration. Split lanes aggressively, front-load constraints, embed exact excerpts, and allow only one repair pass before blocked.
+- `medium`: default local coding model. Keep constraints early and provide bounded repair attempts.
+- `large`: stronger model. You can rely more on repo exploration, but still keep exact scope, validation, and boundaries.
+
+### Anti-Patterns
+
+Use `anti_patterns` to make behavior-level prohibitions explicit. Prefer concrete negatives over generic warnings:
+
+- Bad: "Be careful."
+- Good: "Do not invent imports/classes/helpers; read the target file and reuse existing symbols."
+- Bad: "Validate input."
+- Good: "For blank owner, output owner='unassigned' and include it in report counts."
+- Bad: "Run tests."
+- Good: "Run `PYTHONPATH=. python3 -S tests/test_todos.py`; if it cannot run, report blocked with the missing prerequisite."
 
 ## Output Layout
 
@@ -115,6 +162,7 @@ Include the context a weaker local model needs before editing:
 
 - Repo root as an absolute path and a short project description.
 - Relevant files, modules, tests, commands, and data flow.
+- Embedded code excerpts for target functions, types, tests, and existing helper APIs when local exploration is weak.
 - Current behavior inferred from code.
 - Existing conventions to preserve: naming, error handling, state shape, framework style, formatting, dependency policy, testing style.
 - Known constraints from the user.
@@ -204,6 +252,14 @@ For multi-lane packages, each lane should state:
 - What it must not solve yet.
 - Checkpoint instruction before the next lane starts.
 
+Include weak-worker failure modes and the design rules that prevent them:
+
+- Import/API hallucination -> embed exact excerpts and tell the worker to verify existing symbols.
+- Scope creep -> repeat allowed and forbidden paths near the top of the prompt.
+- Constraint burial -> front-load acceptance boundaries, validation, and stop conditions.
+- Validation omission -> require command output or blocked status.
+- Step-order drift -> order the plan by normalization/defaulting, core behavior, downstream output, validation.
+
 ## 04-validation.md
 
 Include:
@@ -242,12 +298,16 @@ Include:
 - Repo path and working directory.
 - Objective.
 - Context summary.
+- Relevant code excerpts when provided in the spec.
+- Worker capability guidance.
 - Allowed paths.
 - Forbidden paths.
 - Detailed implementation plan.
 - Acceptance criteria.
 - Boundary examples.
 - Validation commands.
+- Anti-patterns.
+- Self-repair loop: change, validate, repair within scope, rerun, then completed or blocked.
 - Stop conditions.
 - Final response format.
 
@@ -267,6 +327,7 @@ Notes:
 ```
 
 Tell the worker not to broaden scope, not to install dependencies unless explicitly allowed, and not to edit validation to hide failures.
+Also tell the worker not to invent imports, helpers, or API names. If a needed symbol is not present in the excerpt or target file, it must read the file or report blocked instead of guessing.
 
 ## 06-review-checklist.md
 
@@ -301,6 +362,9 @@ Include the benchmark-derived gates that made the runner handoffs reliable:
 - Worker Step Plan is ordered by phase.
 - Owner-only checks are mirrored into public acceptance or manual audit and are not worker acceptance criteria.
 - Lane split/decomposition rationale is explicit when the task stays as one lane despite multiple phases.
+- Relevant code excerpts exist for weak exploration surfaces, or the handoff says why path-only context is sufficient.
+- Anti-patterns and a bounded self-repair loop are present in the worker prompt.
+- Worker capability is stated and reflected in lane size, excerpt count, and repair budget.
 
 Add the boundary prompts that apply:
 

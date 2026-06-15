@@ -11,6 +11,35 @@
     "pyproject.toml",
     "*.egg-info/**"
   ],
+  "worker_capability": "small",
+  "relevant_files": [
+    {
+      "path": "src/todos.py",
+      "why": "Contains the reducer action dispatch and report helper return shape that the worker must preserve.",
+      "symbols": [
+        "reduce_todos",
+        "build_report"
+      ],
+      "edit_allowed": "yes, within stated acceptance only",
+      "excerpt": "def reduce_todos(state, action):\n    action_type = action.get(\"type\")\n    if action_type == \"clear\":\n        return {\"items\": []}, None\n    return state, {\"type\": \"unknown_action\"}\n\n\ndef build_report(state):\n    items = state.get(\"items\", [])\n    return {\"total\": len(items), \"visible_ids\": [item.get(\"id\") for item in items]}"
+    },
+    {
+      "path": "tests/test_todos.py",
+      "why": "Shows the public validation shape the worker must keep rather than replacing tests to hide failures.",
+      "symbols": [
+        "test_unknown_action_returns_error",
+        "test_clear_empty_report"
+      ],
+      "edit_allowed": "only focused assertions that express the acceptance criteria",
+      "excerpt": "def test_unknown_action_returns_error():\n    state = {\"items\": [{\"id\": \"a\"}]}\n    next_state, error = reduce_todos(state, {\"type\": \"missing\"})\n    assert next_state == state\n    assert error[\"type\"] == \"unknown_action\""
+    }
+  ],
+  "anti_patterns": [
+    "Do not invent reducer action names, report fields, or helper APIs; reuse the existing reduce_todos/build_report shape.",
+    "Do not edit tests to hide production failures.",
+    "Do not change pyproject.toml, package metadata, or generated files.",
+    "Do not report success without the configured validation command output."
+  ],
   "criteria": [
     {
       "requirement": "Unknown action returns unchanged state and an error object.",
