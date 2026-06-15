@@ -17,6 +17,7 @@ ALLOWED_SPEC_KEYS = {
     "allowed_paths",
     "allow_paths",
     "anti_patterns",
+    "architecture_freedom",
     "assumptions",
     "boundaries",
     "boundary_examples",
@@ -46,13 +47,16 @@ ALLOWED_SPEC_KEYS = {
     "project",
     "project_context",
     "public_validation",
+    "reference_assets",
     "relevant_files",
     "repo",
     "repo_root",
     "scope",
+    "scope_breadth",
     "stop_conditions",
     "task_name",
     "validation_commands",
+    "visual_acceptance",
     "worker_capability",
     "worker_steps",
     "working_directory",
@@ -590,6 +594,22 @@ def render_docs(spec: dict[str, Any], lane: dict[str, Any] | None = None) -> dic
         data.get("dependency_policy"),
         "Do not add dependencies, lockfiles, package metadata, or scaffolding unless the user explicitly permits it.",
     )
+    scope_breadth = text(
+        data.get("scope_breadth"),
+        "Build the full requested experience, not a minimal stub. Implement every feature, mechanic, and content item named in the objective and context. If the objective implies breadth (multiple modes, entities, states, screens, or interactions), deliver that breadth; do not collapse it to the smallest passing version.",
+    )
+    architecture_freedom = text(
+        data.get("architecture_freedom"),
+        "Constraints below pin WHAT to build (behavior, acceptance, look-and-feel), not HOW. Unless a path/anti-pattern explicitly forbids it, you choose the implementation: file structure, helpers, and especially UI technique (HTML/CSS for HUD, menus, and overlays is allowed and encouraged where it is simpler than hand-drawing). Do not let a testability rule push UI onto a harder, worse-looking path: keep correctness-critical logic in pure/testable modules, but render the interface in whatever way looks best.",
+    )
+    visual_acceptance = bullet(
+        data.get("visual_acceptance"),
+        "This task declared no specific visual targets. If it renders any interface, add concrete, checkable look-and-feel requirements here before handing off: element sizes relative to the screen, background richness beyond a single flat fill, motion or feedback on key actions, and a recognizable theme and color set. Without them the worker will pick the cheapest interpretation.",
+    )
+    reference_assets = bullet(
+        data.get("reference_assets"),
+        "No reference was supplied. For a visual-heavy deliverable, add a concrete quality bar here: an attached image, a link to a similar product, or a written description of the intended density, so the worker is not guessing the bar.",
+    )
 
     return {
         "00-context.md": f"""# Context
@@ -623,6 +643,14 @@ Absolute path: `{repo}`
 ## Objective
 
 {objective}
+
+## Scope & Breadth
+
+{scope_breadth}
+
+## Implementation Freedom (WHAT vs HOW)
+
+{architecture_freedom}
 
 ## In Scope
 
@@ -665,6 +693,16 @@ Absolute path: `{repo}`
 ## Public Boundary Assertion Checklist
 
 {boundary_checklist}
+
+## Visual & UX Quality
+
+These are product requirements verified by manual audit, kept as a separate checklist so they are not buried under functional criteria. Manual verification does not mean loose criteria: state quantified, checkable targets.
+
+{visual_acceptance}
+
+### Reference Assets
+
+{reference_assets}
 
 ## Phase Decomposition Rationale
 
@@ -739,6 +777,14 @@ You are the implementation worker for this manually delegated task. Modify files
 
 {objective}
 
+## Scope & Breadth
+
+{scope_breadth}
+
+## Implementation Freedom (WHAT vs HOW)
+
+{architecture_freedom}
+
 ## Context Summary
 
 {context}
@@ -772,6 +818,14 @@ Configured worker capability: `{worker_capability}`.
 ## Boundary Examples
 
 {boundaries}
+
+## Visual & UX Quality (verify by manual audit)
+
+{visual_acceptance}
+
+Reference assets:
+
+{reference_assets}
 
 ## Validation Commands
 
@@ -842,6 +896,9 @@ These gates preserve the benchmark-derived handoff checks without launching a ru
 - Hidden or owner-only checks, if any, are not worker acceptance criteria and are mirrored into public acceptance or manual audit.
 - Hidden/Public Alignment states whether owner-only checks exist and how their product requirements are represented publicly.
 - Phase Decomposition Rationale explains why work is split into lanes or why a single lane is acceptable.
+- Scope & Breadth pins the full requested experience so a weak worker does not ship a minimal stub of a larger ask.
+- Constraint axis is correct: WHAT (behavior, acceptance, look-and-feel) is tight; HOW (architecture, file layout, UI technique) is left free unless a real reason forbids it. Testability rules never force UI onto a harder, worse path; keep purity for correctness-critical logic only.
+- Visual & UX Quality is a separate, quantified, manual-audit checklist for any UI scope, with a reference asset (mockup/screenshot/described density), not just adjectives.
 
 ## Benchmark-Derived Boundary Prompts
 

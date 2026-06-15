@@ -320,6 +320,53 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
         if not has_any(acceptance, ["fresh report", "fresh summary", "response includes", "payload includes"]):
             issues.append(issue("suggestion", "consider_public_action_report_response_boundary", "Action/service response should state which branches return fresh report/summary payloads.", label))
 
+    # ── Visual / UX scope gates ─────────────────────────────────────
+    # A handoff with rendered-UI scope must constrain WHAT (look-and-feel) tightly
+    # while leaving HOW (architecture, UI technique) free, and must give the worker a
+    # quantified visual bar instead of adjectives. Conservative detection: one strong
+    # signal, or two weaker UI signals.
+    strong_visual = ["canvas", "sprite", "spritesheet", "animation", "animate", "viewport", "svg", "shader", "pixel art"]
+    weak_visual = ["html", "css", "render", " ui ", "ux", "frontend", "front-end", "screen", "layout",
+                   "theme", "draw", "visual", "palette", "color", "colour", "dom", "button", "menu", "hud", "game"]
+    # Detect from author-provided signal only (project summary, paths, criteria), NOT from
+    # composer boilerplate, so non-visual handoffs are not mis-flagged by injected sections.
+    detect_text = " " + " ".join([
+        markdown_section_text(context, "Project Summary"),
+        markdown_section_text(task, "Allowed Paths"),
+        markdown_section_text(task, "Forbidden Paths"),
+        markdown_section_text(acceptance, "Numbered Criteria"),
+    ]).lower() + " "
+    strong_hits = [t for t in strong_visual if t in detect_text]
+    weak_hits = [t for t in weak_visual if t in detect_text]
+    visual_scope = bool(strong_hits) or len(weak_hits) >= 2
+    if visual_scope:
+        visual_section = markdown_section_text(acceptance, "Visual & UX Quality")
+        if not visual_section:
+            issues.append(issue("suggestion", "consider_visual_quality_section",
+                "UI/visual scope detected; add a separate Visual & UX Quality acceptance checklist so visuals are not buried under functional criteria.", label))
+        # Quantified targets are checked inside the visual section only, so a stray "%"
+        # or number elsewhere in context does not mask a vague visual spec.
+        quantified_markers = ["minimum", "at least", "no smaller", "ratio", "% of", "duration", "fps", "frames"]
+        has_quantified = bool(re.search(r"\d+\s?(px|pt|rem|em|%|ms|s|fps|vh|vw)\b", visual_section.lower())) or has_any(visual_section, quantified_markers)
+        if not has_quantified:
+            issues.append(issue("warning", "missing_quantified_visual_acceptance",
+                "UI/visual scope detected but the Visual & UX Quality acceptance has no quantified targets (sizes in px/%, scale ratios, animation durations). Add measurable, manual-audit visual criteria; adjectives like 'themed' are not enough.", label))
+        reference_terms = ["mockup", "screenshot", ".png", ".jpg", ".jpeg", ".svg", "reference image",
+                           "comparable product", "described density", "reference design", "wireframe", "figma"]
+        if not has_any(combined, reference_terms):
+            issues.append(issue("suggestion", "consider_reference_asset",
+                "UI/visual scope detected; supply a reference (mockup/screenshot/described density) so the worker has a concrete quality bar.", label))
+        if "implementation freedom" not in (task + prompt).lower() and "what vs how" not in (task + prompt).lower():
+            issues.append(issue("suggestion", "consider_what_how_balance",
+                "State an Implementation Freedom (WHAT vs HOW) note: pin behavior/look-and-feel, leave architecture and UI technique free.", label))
+        # Testability rule must not force UI onto a harder, worse-looking path.
+        ui_words = has_any(combined, ["hud", "interface", " ui ", "menu", "overlay", "control panel"])
+        forces_hard_ui = has_any(combined, ["dom-free", "no dom", "canvas-only", "must not use html",
+                                            "do not use html", "without html", "draw the hud", "draw hp", "render the hud on"])
+        if ui_words and forces_hard_ui:
+            issues.append(issue("warning", "testability_ux_architecture_tradeoff",
+                "A constraint forbids HTML/DOM for UI (likely for testability) while UI/HUD is in scope. Keep purity for correctness-critical logic only; allow HTML/CSS for HUD/menus/overlays so testability does not force a worse-looking UI.", label))
+
     return issues
 
 

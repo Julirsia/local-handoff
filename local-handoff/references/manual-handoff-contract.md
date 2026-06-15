@@ -21,6 +21,15 @@ Common spec fields:
   "allowed_paths": ["src/example.py"],
   "forbidden_paths": ["pyproject.toml", "*.egg-info/**"],
   "worker_capability": "small",
+  "scope_breadth": "full game with N modes/entities, not a minimal stub",
+  "architecture_freedom": "pin behavior + look-and-feel; HOW (file layout, UI technique) is the worker's choice; HTML/CSS for HUD allowed",
+  "visual_acceptance": [
+    "characters/sprites render at >= 6% of viewport height (legible, not specks)",
+    "terrain/background is not a flat single fill: >= 2-color gradient + texture/outline",
+    "projectile trail visible >= 0.4s; explosion flash >= 0.3s",
+    "stated theme + palette clearly recognizable on a desktop viewport"
+  ],
+  "reference_assets": ["mockup.png", "comparable product screenshot, or described density"],
   "relevant_files": [
     {
       "path": "src/example.py",
@@ -103,6 +112,42 @@ Use `anti_patterns` to make behavior-level prohibitions explicit. Prefer concret
 - Good: "For blank owner, output owner='unassigned' and include it in report counts."
 - Bad: "Run tests."
 - Good: "Run `PYTHONPATH=. python3 -S tests/test_todos.py`; if it cannot run, report blocked with the missing prerequisite."
+
+## Constraint Axis: Tight on WHAT, Loose on HOW
+
+A handoff fails the user even when every test passes if rigor is aimed at the wrong axis. Benchmark case: a tightly-specified artillery game handoff passed all 72 logic tests but shipped a visually poor, feature-minimal result, while the same task built by free-form direct instruction was both richer and better-looking. The diagnosis was not "too strict" — it was strict on the wrong things.
+
+Pin **WHAT** tightly; leave **HOW** free:
+
+- Tight (WHAT): observable behavior, acceptance criteria, boundary results, scope breadth, look-and-feel targets, and validation. These are the product.
+- Loose (HOW): file layout, helper structure, internal APIs, and especially UI technique. Do not over-specify exact function signatures or mandate an architecture unless a real integration contract requires it. Over-pinning HOW makes a weak worker produce a literal, minimal, brittle result.
+
+Use the `architecture_freedom` field (rendered into `01-task.md` and `05-worker-prompt.md`) to say this explicitly.
+
+### Testability Must Not Degrade UX Architecture
+
+Keeping logic pure and testable is good — but do not let a testability rule push the *interface* onto a harder, worse-looking path. The benchmark handoff mandated "DOM-free logic, draw the HUD on canvas," which forced the worker to hand-draw HP bars and menus and produced tiny, unreadable UI; the free-form build used HTML/CSS for the HUD and looked far better for less effort.
+
+Rule: isolate correctness-critical logic (ballistics, damage, state transitions) in pure, testable modules — and let the UI be built however looks best, including HTML/CSS for HUD, menus, and overlays. The checker flags `testability_ux_architecture_tradeoff` when a UI-scoped handoff forbids HTML/DOM.
+
+### Scope & Breadth
+
+Weak local models ship the smallest passing version of an under-scoped ask. State the intended breadth explicitly with `scope_breadth`: number of modes/entities/screens/mechanics, content items, and what "complete" means. If the objective implies a rich experience, say so; do not let "minimal clone" be the silent default.
+
+### Visual & UX Quality Is a Quantified, Manual-Audit Product Requirement
+
+Visuals cannot be unit-tested, but "verified by manual audit" is NOT a license for vague adjectives like "themed" or "ink-wash." Encode visual quality as a separate, quantified acceptance checklist (`visual_acceptance`), kept distinct from functional criteria so it is not buried. Use measurable, checkable targets, for example:
+
+- Minimum on-screen element sizes (px or % of viewport) so sprites/text are not specks.
+- Grid-to-sprite scale ratios so elements do not shrink to nothing on small viewports.
+- Background/surface richness: no flat single fill — require gradient, texture, or detail.
+- Animation/feedback durations (e.g., trajectory trail >= 0.4s, explosion flash >= 0.3s).
+- Explicit palette usage and a recognizable theme.
+- A **reference asset** (`reference_assets`): mockup, comparable-product screenshot, or described density, so the worker has a concrete quality bar.
+
+Remember the executor ceiling: a weak (7B-30B) local model has a low creative/visual ceiling you cannot fully specify away. For visual-heavy deliverables, supply a reference, allow HTML/CSS, and assume a human or stronger-model polish pass — or recommend the user run the visual layer that way.
+
+The checker emits `missing_quantified_visual_acceptance` (warning), `consider_visual_quality_section`, `consider_reference_asset`, and `consider_what_how_balance` when UI/visual scope is detected. Treat the warning as a must-fix for any UI deliverable.
 
 ## Output Layout
 
@@ -455,3 +500,7 @@ Before reporting completion, verify:
 - Stop conditions are clear.
 - Multi-lane dependencies and checkpoint expectations are clear.
 - Owner-only material, if any, is clearly separated from worker-visible material.
+- Constraints are tight on WHAT (behavior, look-and-feel, acceptance) and loose on HOW (architecture, file layout, UI technique); no needless function-signature or architecture mandates.
+- No testability rule forces the UI onto a worse path; HTML/CSS for HUD/menus/overlays is allowed while correctness-critical logic stays pure/testable.
+- Scope & Breadth states the full intended experience so a weak worker does not ship a minimal stub.
+- For any UI scope: a separate Visual & UX Quality checklist with quantified, manual-audit targets and a reference asset is present (not just adjectives).
