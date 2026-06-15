@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Handoff"
+  short_description: "Draft manual local-agent handoff documents"
+  default_prompt: "Use $local-handoff to create a detailed manual handoff package for a local model."
