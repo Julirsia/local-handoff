@@ -1,0 +1,108 @@
+{
+  "task_name": "eastern-fantasy-artillery-prototype",
+  "repo": "/tmp/eastern-fantasy-game",
+  "objective": "Build a browser-playable Eastern fantasy turn-based artillery prototype whose first screen is the game experience, not a landing page.",
+  "context": "Greenfield static web game. The worker should optimize the first implementation pass for playable richness and visual clarity: a battlefield, 2-4 local players, class identity, HP/MP, weapons, special abilities, wind, destructible terrain, combat log, and restartable win state. This is a creative prototype handoff, so product completeness and visible feedback matter more than a rigid internal architecture.",
+  "allowed_paths": [
+    "index.html",
+    "style.css",
+    "game.js",
+    "README.md"
+  ],
+  "forbidden_paths": [
+    "node_modules/**",
+    "package.json",
+    "package-lock.json",
+    "dist/**"
+  ],
+  "worker_capability": "medium",
+  "scope_breadth": "Deliver a full playable prototype with 4 distinct character classes, 4 weapons, at least 1 special ability per class, movement, aiming, firing, terrain destruction, HP/MP updates, turn rotation, combat log, win/restart state, and setup for 2-4 players. Do not ship a minimal two-dot artillery demo.",
+  "architecture_freedom": "Pin the product experience and acceptance criteria, not the internal architecture. A single-file vanilla JS implementation is acceptable for the prototype. HTML/CSS HUD, menus, cards, sliders, modals, and logs are allowed and encouraged; do not hand-draw UI on canvas unless it improves the result. Keep only correctness-critical calculations such as damage, turn rotation, and projectile stepping isolated enough to inspect or later test.",
+  "visual_acceptance": [
+    "Canvas battlefield occupies at least 60% of the desktop viewport width and 45% of viewport height.",
+    "Player characters are clearly legible at 1280x720: each character body is at least 28px tall or 6% of battlefield height, whichever is larger.",
+    "HUD uses HTML/CSS cards or panels for every player with readable HP and MP text; main controls are at least 40px tall.",
+    "Background is visually rich: at minimum a 2-color sky gradient plus moon/stars/clouds or equivalent themed detail, not a flat fill.",
+    "Terrain has at least 3 visually distinct layers or textures, and projectile impacts visibly alter the terrain.",
+    "Projectile trail remains visible for at least 400ms and explosion/damage feedback remains visible for at least 300ms.",
+    "Theme is recognizable as Eastern fantasy through names, palette, icons/silhouettes, and on-screen labels."
+  ],
+  "reference_assets": [
+    "Described density: one-screen game layout with top player cards, central battlefield, bottom control panels, and floating combat log, comparable in information density to a small Worms/Gunbound-style browser prototype."
+  ],
+  "criteria": [
+    {
+      "requirement": "The first loaded screen is immediately playable or one click from play, with battlefield, HUD, controls, and combat log visible.",
+      "evidence": "Manual browser audit at 1280x720.",
+      "effect": "A user can understand whose turn it is, select an action, aim, and fire without reading external documentation."
+    },
+    {
+      "requirement": "Supports 2, 3, and 4 local hot-seat players with distinct class identity.",
+      "evidence": "Manual setup audit for each player count.",
+      "effect": "Player cards, character markers, HP/MP values, and turns match the selected count."
+    },
+    {
+      "requirement": "Firing a weapon changes game state and visible feedback.",
+      "evidence": "Manual audit: fire once and observe projectile, terrain impact or miss, MP cost, log entry, and turn action lockout.",
+      "effect": "MP decreases, action buttons update, combat log records the shot, and the battlefield shows projectile or impact feedback."
+    },
+    {
+      "requirement": "Damage, elimination, turn rotation, and win/restart work.",
+      "evidence": "Manual playthrough or debug-assisted audit.",
+      "effect": "Damaged players lose HP, eliminated players are skipped, one survivor produces a win state, and restart resets state."
+    }
+  ],
+  "boundaries": [
+    {
+      "case": "Player count set to 2, 3, and 4.",
+      "expected": "Only the selected number of players appear and turns rotate through living players only.",
+      "evidence": "Manual setup audit."
+    },
+    {
+      "case": "Player lacks enough MP for a selected weapon or ability.",
+      "expected": "Action is blocked or disabled, no negative MP occurs, and the combat log explains the reason.",
+      "evidence": "Manual action audit."
+    },
+    {
+      "case": "Projectile misses all players or exits the battlefield.",
+      "expected": "No damage is applied, a miss/resolution is logged, and the player can end or advance the turn.",
+      "evidence": "Manual firing audit."
+    },
+    {
+      "case": "Viewport is narrow mobile portrait.",
+      "expected": "Battlefield, HUD, and controls remain usable without text overlap; controls may stack but remain at least 40px tall.",
+      "evidence": "Manual browser audit around 390x844."
+    }
+  ],
+  "manual_checks": [
+    "Serve the directory with `python3 -m http.server 8000` and open http://127.0.0.1:8000.",
+    "Start 4-player play, fire one weapon, use one special ability, end a turn, and verify visible state updates.",
+    "Inspect console for errors during load, firing, ability use, turn end, and restart.",
+    "Resize to mobile portrait and verify the Visual & UX Quality checklist."
+  ],
+  "validation_commands": [
+    {
+      "cwd": "/tmp/eastern-fantasy-game",
+      "command": "node --check game.js",
+      "expected_exit": 0,
+      "proves": "The main JavaScript file is syntactically valid."
+    }
+  ],
+  "worker_steps": [
+    "Create the static files and implement a high-density first screen with battlefield, player cards, controls, and log.",
+    "Implement classes, weapons, abilities, HP/MP, turn state, movement, wind, projectile firing, terrain destruction, and restart.",
+    "Add visual feedback for aiming, firing, projectile travel, impact, damage, disabled actions, and turn change.",
+    "Run the syntax check and manual browser checklist, then report acceptance evidence with screenshots or concise observations."
+  ],
+  "anti_patterns": [
+    "Do not invent imports, helper APIs, frameworks, build tools, package scripts, or external services; use plain static files unless the user explicitly changes scope.",
+    "Do not edit tests, validation commands, or manual acceptance criteria merely to hide production failures.",
+    "Do not build a landing page or static mockup instead of the playable game.",
+    "Do not reduce the scope to two generic players, one weapon, no abilities, or no combat log.",
+    "Do not force HUD, menus, sliders, cards, or logs into canvas rendering when HTML/CSS would be clearer.",
+    "Do not add npm dependencies, bundlers, frameworks, accounts, backends, online multiplayer, or generated build artifacts.",
+    "Do not report success without the syntax check and manual browser audit evidence."
+  ],
+  "phase_decomposition_rationale": "Single-lane prototype is intentional because this is a first-pass creative game build. A later handoff can split pure logic tests and refactoring after the playable prototype exists.",
+  "hidden_public_alignment": "No owner-only checks are configured. Visual quality, scope breadth, and gameplay behavior are represented as public manual acceptance criteria and manual audit items."
+}

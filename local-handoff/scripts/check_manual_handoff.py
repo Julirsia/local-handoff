@@ -216,7 +216,14 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
     ]:
         if term not in prompt.lower():
             issues.append(issue("warning", code, message, label))
-    if "relevant code excerpts" in prompt.lower() and "```" not in prompt_code_excerpt_section(prompt) and section_has_value(task, "Allowed Paths"):
+    relevant_files_section = markdown_section_text(context, "Relevant Files, Modules, Tests, and Data Flow")
+    has_existing_file_context = bool(
+        re.search(
+            r"`?[\w./-]+\.(?:py|js|mjs|cjs|ts|tsx|jsx|go|rs|java|cs|rb|php|css|html|json|ya?ml|md)`?",
+            relevant_files_section,
+        )
+    )
+    if "relevant code excerpts" in prompt.lower() and "```" not in prompt_code_excerpt_section(prompt) and has_existing_file_context:
         issues.append(issue("suggestion", "missing_embedded_code_excerpt_blocks", "Relevant Code Excerpts section has no fenced excerpts; embed target functions/types/tests when local exploration is weak.", label))
     if "do not invent" not in prompt.lower() and "verify existing" not in prompt.lower():
         issues.append(issue("warning", "missing_no_api_guessing_antipattern", "Anti-patterns should explicitly forbid guessed imports/APIs/symbols.", label))
@@ -306,10 +313,12 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
         issues.append(issue("suggestion", "consider_public_fractional_money_rounding", "Money/rate behavior should include fractional rounding boundaries when relevant.", label))
     if has_any(domain_text, ["clear", "reset", "delete", "remove"]) and has_any(domain_text, ["render", "summary", "persist", "display", "report"]) and not has_any(acceptance, ["empty", "zero", "visible"]):
         issues.append(issue("suggestion", "consider_public_empty_state_downstream_boundary", "Clear/reset/remove behavior should assert downstream empty-state output.", label))
-    if has_any(domain_text, ["action", "reducer", "handler", "service", "command", "route", "endpoint", "mutation"]):
+    branch_domain_text = "\n".join([context, task, acceptance])
+    branch_domain_low = branch_domain_text.lower()
+    if re.search(r"\b(action|reducer|handler|service|command|route|endpoint|mutation)\b", branch_domain_low):
         branches = ["update", "move", "clear", "reset", "filter", "unknown"]
-        mentioned = [branch for branch in branches if branch in domain_low]
-        evidenced = [branch for branch in branches if branch in acceptance.lower()]
+        mentioned = [branch for branch in branches if re.search(rf"\b{re.escape(branch)}\b", branch_domain_low)]
+        evidenced = [branch for branch in branches if re.search(rf"\b{re.escape(branch)}\b", acceptance.lower())]
         if len(mentioned) >= 3 and len(evidenced) < len(mentioned):
             issues.append(issue("suggestion", "consider_public_action_branch_coverage", "Public evidence/checklist should assert every named action branch result.", label))
     if has_any(domain_text, ["report", "summary", "aggregate", "count", "visible id"]) and has_any(domain_text, ["status", "priority", "severity", "owner", "assignee", "id"]):
@@ -356,6 +365,17 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
         if not has_any(combined, reference_terms):
             issues.append(issue("suggestion", "consider_reference_asset",
                 "UI/visual scope detected; supply a reference (mockup/screenshot/described density) so the worker has a concrete quality bar.", label))
+        scope_section = markdown_section_text(task, "Scope & Breadth").lower()
+        default_scope_markers = [
+            "build the full requested experience, not a minimal stub",
+            "implement every feature, mechanic, and content item named",
+            "do not collapse it to the smallest passing version",
+        ]
+        has_specific_scope_breadth = scope_section and not any(marker in scope_section for marker in default_scope_markers)
+        scope_detail_markers = ["screen", "mode", "mechanic", "class", "weapon", "ability", "state", "player", "component", "panel", "flow"]
+        if not has_specific_scope_breadth or not has_any(scope_section, scope_detail_markers):
+            issues.append(issue("warning", "missing_scope_breadth",
+                "UI/game scope detected but Scope & Breadth is missing or still generic. State the required screens, mechanics, entities, modes, and content counts so the worker does not ship the smallest passing stub.", label))
         if "implementation freedom" not in (task + prompt).lower() and "what vs how" not in (task + prompt).lower():
             issues.append(issue("suggestion", "consider_what_how_balance",
                 "State an Implementation Freedom (WHAT vs HOW) note: pin behavior/look-and-feel, leave architecture and UI technique free.", label))

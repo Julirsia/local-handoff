@@ -74,6 +74,16 @@ Give `/tmp/sample-handoff/lanes/<lane>/05-worker-prompt.md` or `/tmp/sample-hand
   "allowed_paths": ["src/example.py"],
   "forbidden_paths": ["pyproject.toml", "*.egg-info/**"],
   "worker_capability": "small",
+  "scope_breadth": "full requested experience, not a minimal stub; list the required screens, mechanics, modes, and content counts",
+  "architecture_freedom": "pin WHAT tightly, but leave HOW flexible; allow HTML/CSS for UI/HUD unless an integration contract forbids it",
+  "visual_acceptance": [
+    "primary interactive controls are at least 40px tall on desktop and mobile",
+    "key rendered entities are at least 6% of viewport height or otherwise clearly legible",
+    "main feedback animations remain visible for at least 300ms"
+  ],
+  "reference_assets": [
+    "mockup.png, screenshot link, comparable product reference, or described density"
+  ],
   "relevant_files": [
     {
       "path": "src/example.py",
@@ -124,6 +134,14 @@ Give `/tmp/sample-handoff/lanes/<lane>/05-worker-prompt.md` or `/tmp/sample-hand
 Add `lanes` for sequential smaller handoffs. Each lane may override objective, allowed paths, forbidden paths, criteria, boundaries, validation commands, and worker steps.
 
 Use `relevant_files` selectively. Excerpts cost frontier tokens during handoff creation, but they usually save more total work when a local worker would otherwise hallucinate APIs, miss existing return shapes, or repeatedly fail validation. For `worker_capability: "small"`, keep most lanes to five or fewer excerpts and split the task when more code context is required.
+
+For UI, game, or visual-heavy work, prefer a product brief style for the first implementation pass:
+
+- Tighten **WHAT**: required screens, mechanics, content breadth, visual density, interaction feedback, and manual acceptance.
+- Loosen **HOW**: do not force file layout, helper APIs, or canvas-only UI unless a real integration contract requires it.
+- Allow HTML/CSS for HUDs, menus, overlays, cards, sliders, logs, and setup screens. Keep only correctness-critical logic pure/testable.
+- Add quantified `visual_acceptance` and at least one `reference_assets` entry so "manual audit" does not collapse into vague adjectives.
+- Use `examples/game-ui-spec.json` as the starting point for a playable prototype handoff.
 
 ## Install for Codex
 
