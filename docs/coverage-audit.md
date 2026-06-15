@@ -30,16 +30,29 @@ This file maps the runner-backed batch handoff safeguards to the manual Local Ha
 
 The checker implements manual equivalents of benchmark/preflight signals:
 
-- `missing_core_file`
+- `missing_handoff_file`
+- `missing_package_dir`
+- `missing_readme`
+- `placeholder_left`
+- `unfilled_validation_placeholder`
+- `package_relative_handoff_refs`
 - `missing_public_evidence_matrix`
 - `missing_boundary_examples`
 - `missing_public_boundary_assertion_checklist`
 - `missing_phase_decomposition_rationale`
 - `missing_hidden_public_alignment`
+- `missing_public_validation`
+- `missing_allow_paths`
+- `missing_forbid_paths`
 - `hidden_success_as_worker_acceptance`
+- `hidden_runner_evidence_in_acceptance`
+- `hidden_evidence_in_public_matrix`
+- `hidden_without_comparable_public`
+- `hidden_contract_check`
 - `hidden_output_shape_overreach`
 - `runner_artifact_reference`
 - `runner_artifact_present`
+- `missing_benchmark_quality_gates`
 - `worker_prompt_not_front_loaded`
 - `worker_prompt_missing_allowed_paths`
 - `worker_prompt_missing_forbidden_paths`
@@ -47,13 +60,18 @@ The checker implements manual equivalents of benchmark/preflight signals:
 - `worker_prompt_missing_stop_conditions`
 - `worker_prompt_missing_final_format`
 - `validation_command_static_check_failed`
+- `python_import_path_gap`
+- `python_packaging_scope_gap`
 - `python_site_path_isolation_gap`
 - `js_module_type`
+- `vague_acceptance_without_example`
 - `consider_worker_step_plan`
 - `consider_lane_split`
 - `consider_lane_split_from_metrics`
 - `consider_complex_logic_decomposition`
 - `requires_phase_split_or_rationale`
+- `requires_lane_split`
+- `requires_phase_split`
 - `consider_public_type_boundary_examples`
 - `consider_public_dict_field_type_boundaries`
 - `consider_public_zero_value_boundaries`
@@ -81,5 +99,8 @@ These runner-only mechanisms are excluded because Local Handoff does not launch 
 - Hidden command execution by runner.
 - `ccusage` snapshots.
 - Benchmark aggregate collectors over completed runs.
+- `invalid_review_policy`
+- `review_policy_skip_without_hidden_validation`
+- `worker_process_failure_advisory`
 
 Manual equivalents are provided through the worker audit packet and `manual-preflight.json`, but completed-code audit is a separate user-triggered workflow.

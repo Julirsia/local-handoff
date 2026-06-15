@@ -23,6 +23,18 @@ CORE_FILES = [
     "07-handoff-quality-gates.md",
 ]
 
+VAGUE_ACCEPTANCE_TERMS = {
+    "deterministic": "give an exact tie-break example",
+    "validate": "list invalid inputs and expected errors/status",
+    "validation": "list invalid inputs and expected errors/status",
+    "sort": "state ascending/descending and tie-breaks",
+    "sorted": "state ascending/descending and tie-breaks",
+    "merge": "state overlap/touching/equality behavior",
+    "failure": "state failure API/result behavior",
+    "retry": "state attempt-count semantics",
+    "cache": "state cache hit/miss behavior",
+}
+
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
@@ -44,11 +56,77 @@ def has_any(text: str, terms: list[str]) -> bool:
     return any(term in low for term in terms)
 
 
+def markdown_section_text(markdown: str, heading: str) -> str:
+    match = re.search(
+        rf"(?ims)^#+\s+{re.escape(heading)}\s*$([\s\S]*?)(?=^#+\s+|\Z)",
+        markdown,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def validation_commands(validation: str) -> list[str]:
+    commands: list[str] = []
+    for block in re.findall(r"```(?:bash|sh)?\n(.*?)\n```", validation, flags=re.DOTALL | re.IGNORECASE):
+        for line in block.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                commands.append(line)
+    return commands
+
+
+def command_looks_python(command: str) -> bool:
+    return bool(re.search(r"(^|[;&|()\s])(python3?|pytest)\b", command))
+
+
+def python_script_import_path_gap(command: str) -> bool:
+    if "PYTHONPATH=." in command or "PYTHONPATH=$PWD" in command or "PYTHONPATH=$(pwd)" in command:
+        return False
+    if re.search(r"(^|[;&|()\s])python3?\s+-m\b", command):
+        return False
+    return bool(re.search(r"(^|[;&|()\s])python3?\s+(?!-c\b)(?!-m\b)\S+\.py\b", command))
+
+
+def missing_public_dict_field_type_boundary(text: str) -> bool:
+    lowered = text.lower()
+    field_map_signal = re.search(
+        r"\b(fields?|field map|field mapping)\b.{0,80}\b(dict(?:ionary)?|object|map)\b"
+        r"|\b(dict(?:ionary)?|object|map)\b.{0,80}\b(fields?|field map|field mapping)\b",
+        lowered,
+    )
+    field_key_contract_signal = re.search(
+        r"\bfield\s+keys?\b|\bkeys?\b.{0,40}\bfields?\b|\bfields?\b.{0,40}\bkeys?\b",
+        lowered,
+    )
+    field_value_contract_signal = re.search(
+        r"\bfield\s+values?\b|\bvalues?\b.{0,40}\bfields?\b|\bfields?\b.{0,40}\bvalues?\b",
+        lowered,
+    )
+    if not (field_map_signal and field_key_contract_signal and field_value_contract_signal):
+        return False
+    key_type_signal = re.search(
+        r"\b(non[- ]?string|numeric|number|integer|float|boolean|bool)\s+(?:field\s+)?keys?\b|\b(?:field\s+)?keys?\s+(?:are\s+)?(?:coerc\w*|converted|type[- ]?checked)",
+        lowered,
+    )
+    value_type_signal = re.search(
+        r"\b(non[- ]?string|numeric|number|integer|float|boolean|bool)\s+(?:field\s+)?values?\b|\b(?:field\s+)?values?\s+(?:are\s+)?(?:coerc\w*|converted|stored as strings?|type[- ]?checked)",
+        lowered,
+    )
+    return key_type_signal is None or value_type_signal is None
+
+
+def section_has_value(markdown: str, heading: str) -> bool:
+    section = markdown_section_text(markdown, heading).lower()
+    return bool(section and "not specified" not in section and "fill_before_handoff" not in section)
+
+
 def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     for name in CORE_FILES:
-        if not (pkg / name).exists():
-            issues.append(issue("error", "missing_core_file", f"Missing {name}.", str(pkg / name)))
+        body = read(pkg / name)
+        if not body.strip():
+            issues.append(issue("error", "missing_handoff_file", f"Required handoff file is empty or missing: {name}.", str(pkg / name)))
+        if re.search(r"\b(?:TODO|TBD)\b|Replace this|FILL_BEFORE_HANDOFF", body):
+            issues.append(issue("error", "placeholder_left", "Handoff still contains placeholder text.", str(pkg / name)))
 
     acceptance = read(pkg / "02-acceptance.md")
     context = read(pkg / "00-context.md")
@@ -65,6 +143,9 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
 
     if "public evidence matrix" not in acceptance.lower():
         issues.append(issue("error", "missing_public_evidence_matrix", "Acceptance must include Public Evidence Matrix.", label))
+    public_evidence_matrix = markdown_section_text(acceptance, "Public Evidence Matrix")
+    if re.search(r"\b(hidden|withheld)\b", public_evidence_matrix.lower()):
+        issues.append(issue("error", "hidden_evidence_in_public_matrix", "Public Evidence Matrix must cite public validation or manual audit only, not hidden/withheld checks.", label))
     if "boundary examples" not in acceptance.lower():
         issues.append(issue("error", "missing_boundary_examples", "Acceptance must include Boundary Examples.", label))
     if "public boundary assertion checklist" not in acceptance.lower():
@@ -75,10 +156,22 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
         issues.append(issue("warning", "missing_hidden_public_alignment", "Validation should include Hidden/Public Alignment, even when owner-only checks are absent.", label))
     if "not specified" in acceptance.lower():
         issues.append(issue("warning", "unspecified_acceptance_content", "Acceptance still contains 'Not specified' placeholder text.", label))
+    if not section_has_value(task, "Allowed Paths"):
+        issues.append(issue("warning", "missing_allow_paths", "Allowed paths are missing or unspecified; scope control is weaker.", label))
+    if not section_has_value(task, "Forbidden Paths"):
+        issues.append(issue("warning", "missing_forbid_paths", "Forbidden paths are missing or unspecified.", label))
     if "fill_before_handoff" in combined_low:
         issues.append(issue("error", "unfilled_validation_placeholder", "Validation placeholder remains; fill public command or explicit manual audit before handoff.", label))
+    commands = validation_commands(validation)
+    if not commands and not has_any(validation, ["manual audit", "manual check", "manual verification"]):
+        issues.append(issue("error", "missing_public_validation", "Add a public validation command or explicit manual audit item.", label))
     if "hidden" in combined_low and has_any(combined, ["hidden validation passes", "hidden command passes", "withheld test passes"]):
         issues.append(issue("error", "hidden_success_as_worker_acceptance", "Do not ask worker to prove hidden/withheld validation success.", label))
+    for line in re.findall(r"(?m)^\s*(?:\d+\.|-)\s+(.+)$", acceptance):
+        lowered_line = line.lower()
+        if re.search(r"\b(hidden|withheld)\b", lowered_line) and re.search(r"\b(pass|passes|validation|audit|test|command|verify|verified)\b", lowered_line):
+            issues.append(issue("error", "hidden_runner_evidence_in_acceptance", "Do not make hidden/audit command success a worker acceptance criterion.", label))
+            break
     owner_shape_terms = ["data-", "zero-count", "exact html", "exact key", "exact attribute", "ordering"]
     owner_notes_text = read(pkg.parent.parent / "owner-audit-notes.md") + "\n" + read(pkg.parent / "owner-audit-notes.md")
     if owner_notes_text and any(term in owner_notes_text.lower() for term in owner_shape_terms):
@@ -87,6 +180,8 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
             issues.append(issue("suggestion", "hidden_output_shape_overreach", "Owner-only checks appear to assert output-shape details not named in public acceptance.", label))
     if has_any(combined, ["agent_batch_runner.py", "run-agent-batch.sh", "batch.json", "results/worker-runs"]):
         issues.append(issue("error", "runner_artifact_reference", "Manual handoff must not include runner execution artifacts.", label))
+    if re.search(r"\bhandoff/[0-9a-z_-]+\.md\b", prompt.lower()) and not all(term in prompt.lower() for term in ["objective", "acceptance criteria", "validation commands"]):
+        issues.append(issue("error", "package_relative_handoff_refs", "Worker prompt refers to repo-relative handoff files without being self-contained.", label))
     if "benchmark-derived boundary prompts" not in quality.lower():
         issues.append(issue("warning", "missing_benchmark_quality_gates", "07-handoff-quality-gates.md should include benchmark-derived boundary prompts.", label))
 
@@ -107,19 +202,46 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
         issues.append(issue("suggestion", "consider_worker_step_plan", "Add an explicit ordered worker step plan.", label))
 
     command_text = validation.lower()
-    for command in re.findall(r"```(?:bash|sh)?\n(.*?)\n```", validation, flags=re.DOTALL | re.IGNORECASE):
-        for line in command.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            try:
-                shlex.split(line)
-            except ValueError as exc:
-                issues.append(issue("error", "validation_command_static_check_failed", f"Validation command has shell parse error: {exc}", label))
+    for line in commands:
+        try:
+            shlex.split(line)
+        except ValueError as exc:
+            issues.append(issue("error", "validation_command_static_check_failed", f"Validation command has shell parse error: {exc}", label))
+    if any(python_script_import_path_gap(command) for command in commands):
+        issues.append(issue("warning", "python_import_path_gap", "Python script validation may omit repo root from sys.path; prefer PYTHONPATH=. python3 ... or python3 -m ...", label))
     if "pythonpath" in command_text and "python3 -s" not in command_text and "python -s" not in command_text:
         issues.append(issue("warning", "python_site_path_isolation_gap", "For stdlib/package-less Python validation, prefer PYTHONPATH=. python3 -S ...", label))
+    forbidden_section = markdown_section_text(task, "Forbidden Paths")
+    if any(command_looks_python(command) for command in commands):
+        missing_forbids = [
+            pattern
+            for pattern in ["pyproject.toml", "*.egg-info/**"]
+            if pattern not in forbidden_section
+        ]
+        if missing_forbids:
+            issues.append(issue("warning", "python_packaging_scope_gap", "Python validation is configured but package metadata is not explicitly forbidden: " + ", ".join(missing_forbids), label))
     if ".js" in command_text and "node" in command_text and ".mjs" not in command_text and ".cjs" not in command_text and "type" not in combined_low:
         issues.append(issue("suggestion", "js_module_type", "For Node .js ES module validation, state package module type or prefer .mjs/.cjs checks.", label))
+    for term, fix in VAGUE_ACCEPTANCE_TERMS.items():
+        if re.search(rf"\b{re.escape(term)}\w*\b", domain_low):
+            if not re.search(r"\b(example|e\.g\.|such as|expected|assert|raises|throws|400|error)\b", domain_low):
+                issues.append(issue("warning", "vague_acceptance_without_example", f"Term '{term}' appears without a concrete example; {fix}.", label))
+                break
+    hidden_alignment = markdown_section_text(validation, "Hidden/Public Alignment").lower()
+    no_owner_only_signal = "no owner-only checks" in hidden_alignment or "owner-only checks are absent" in hidden_alignment
+    owner_or_hidden_signal = bool(owner_notes_text.strip()) or (
+        not no_owner_only_signal and has_any(validation, ["owner-only", "hidden", "withheld"])
+    )
+    if owner_or_hidden_signal and not has_any(validation, ["public validation", "public evidence", "manual audit", "boundary examples"]):
+        issues.append(issue("warning", "hidden_without_comparable_public", "Owner-only/hidden checks exist but public validation may not exercise comparable behavior.", label))
+    if owner_or_hidden_signal:
+        alignment_ok = (
+            "generalization" in hidden_alignment
+            and has_any(hidden_alignment, ["public", "manual audit", "acceptance"])
+            and has_any(hidden_alignment, ["not worker", "not a worker", "not acceptance", "not asked"])
+        )
+        if not alignment_ok:
+            issues.append(issue("suggestion", "hidden_contract_check", "Hidden/Public Alignment should say owner-only checks are generalization-only and represented by public acceptance/manual audit.", label))
 
     termset = words(domain_text)
     allowed_roots = re.findall(r"^- ([A-Za-z0-9_./-]+)", read(pkg / "01-task.md"), flags=re.MULTILINE)
@@ -138,13 +260,17 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
         issues.append(issue("error", "requires_phase_split_or_rationale", "Large single handoff needs lane/phase split or explicit Phase Decomposition Rationale.", label))
     if len(distinct_roots) >= 3:
         issues.append(issue("warning", "consider_lane_split", "Allowed paths span several roots; consider domain/lane split.", label))
+    if criterion_count >= 5 and len(distinct_roots) >= 2:
+        issues.append(issue("error", "requires_lane_split", "Large handoff spanning multiple roots should be split into lane handoffs plus integration review.", label))
+    if criterion_count >= 8 and len(termset & complex_terms) >= 5 and "phase decomposition rationale" not in acceptance.lower():
+        issues.append(issue("error", "requires_phase_split", "Complex single-lane handoff needs phase split or explicit Phase Decomposition Rationale.", label))
 
     if has_any(domain_text, ["normalize", "default", "coerce", "fallback"]):
         for term in ["numeric", "non-string", "boolean", "scalar", "list", "dict"]:
             if term not in domain_low:
                 issues.append(issue("suggestion", "consider_public_type_boundary_examples", f"Normalization/defaulting may need public {term} boundary evidence.", label))
                 break
-    if has_any(domain_text, ["object", "dict", "map", "record"]) and not has_any(domain_text, ["non-string key", "non-string value", "malformed field"]):
+    if missing_public_dict_field_type_boundary(domain_text):
         issues.append(issue("suggestion", "consider_public_dict_field_type_boundaries", "Dict/object normalization should name malformed key/value field boundaries when relevant.", label))
     has_zero_boundary = "zero" in domain_low or re.search(r"\b0\b", domain_text) is not None
     if has_any(domain_text, ["amount", "quantity", "total", "balance", "line item"]) and not has_zero_boundary:
