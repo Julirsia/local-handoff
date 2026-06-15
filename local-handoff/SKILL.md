@@ -43,7 +43,7 @@ Before drafting a handoff package, read `references/manual-handoff-contract.md`.
    - Prefer writing one JSON spec with `task_name`, `repo`, `objective`, `context`, `allowed_paths`, `forbidden_paths`, `criteria`, `boundaries`, `validation_commands`, `worker_steps`, `worker_capability`, `relevant_files`, `anti_patterns`, and optional `lanes`.
    - Use `lanes` when the local model should execute smaller sequential chunks. Each lane can override objective, paths, criteria, boundaries, validation, and worker steps.
    - Use `worker_capability` (`small`, `medium`, `large`) to tune lane size, excerpt count, and repair budget. Default to `medium`; use `small` for 7B-30B local models or weak repo exploration.
-   - Add `relevant_files` entries with path, why, symbols, edit permission, and short excerpts for target functions, types, tests, or helper APIs when path-only context may make the worker guess.
+   - Add `relevant_files` entries with path, `lines` (line range anchor), why, symbols, edit permission, and short excerpts for target functions, types, tests, or helper APIs when path-only context may make the worker guess. Embedded excerpts are point-in-time snapshots; the composer flags them so the worker reads the live file and treats it as the source of truth.
    - Add `anti_patterns` for action-level failure modes: guessed APIs, scope creep, test masking, skipped validation, and continuing past stop conditions.
    - Put completeness into the spec fields rather than manually drafting all documents from scratch.
 

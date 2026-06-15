@@ -74,7 +74,7 @@ COMMON_KEY_TYPOS = {
 WORKER_CAPABILITIES = {"small", "medium", "large"}
 
 DEFAULT_ANTI_PATTERNS = [
-    "Do not invent imports, classes, helper functions, CLI flags, or API names. Verify existing symbols from the provided excerpts or by reading files.",
+    "Do not invent imports, classes, helper functions, CLI flags, or API names. Verify every symbol by reading the live file; embedded excerpts may be stale, so the file always wins over the excerpt.",
     "Do not edit tests, fixtures, snapshots, or validation commands merely to hide production failures.",
     "Do not broaden scope, reformat unrelated files, rename public APIs, or change package metadata unless explicitly required.",
     "Do not skip validation or report success without the configured command output or an explicit blocked reason.",
@@ -168,22 +168,36 @@ def code_fence(body: Any, language: str = "text") -> str:
     return f"```{language}\n{cleaned}\n```"
 
 
+EXCERPT_FRESHNESS_NOTE = (
+    "> Excerpts below are point-in-time snapshots and may be stale. "
+    "The live file is always the source of truth: read the cited path/line range "
+    "before editing, and if the file differs from the excerpt, trust the file."
+)
+
+
 def render_relevant_files(files: Any) -> str:
     values = as_list(files)
     if not values:
         return "- Not specified."
 
+    has_excerpt = any(
+        isinstance(item, dict) and text(item.get("excerpt") or item.get("snippet"), "")
+        for item in values
+    )
+
     lines: list[str] = []
     for item in values:
         if isinstance(item, dict):
             path = text(item.get("path") or item.get("file"), "FILL_BEFORE_HANDOFF: path")
+            line_range = text(item.get("lines") or item.get("line_range"), "")
+            anchor = f"{path}:{line_range}" if line_range else path
             why = text(item.get("why") or item.get("reason"), "Reason not specified.")
             symbols = bullet(item.get("symbols") or item.get("functions") or item.get("classes"), "- Symbols not specified.")
             edit_allowed = text(item.get("edit_allowed"), "Follow allowed paths.")
             excerpt = text(item.get("excerpt") or item.get("snippet"), "")
             language = text(item.get("language"), language_for_path(path))
             block = [
-                f"### `{path}`",
+                f"### `{anchor}`",
                 "",
                 f"- Why it matters: {why}",
                 f"- Edit permission: {edit_allowed}",
@@ -191,13 +205,17 @@ def render_relevant_files(files: Any) -> str:
                 symbols,
             ]
             if excerpt:
+                block.append(f"- Verify against the live file before editing: `{anchor}`")
                 block.extend(["", code_fence(excerpt, language)])
             else:
                 block.append("- Excerpt: Not embedded. Worker must read this file before editing.")
             lines.append("\n".join(block))
         else:
             lines.append(f"- {text(item)}")
-    return "\n\n".join(lines)
+    body = "\n\n".join(lines)
+    if has_excerpt:
+        body = f"{EXCERPT_FRESHNESS_NOTE}\n\n{body}"
+    return body
 
 
 def normalized_worker_capability(data: dict[str, Any]) -> str:
@@ -948,8 +966,8 @@ def compose(spec: dict[str, Any], out_dir: Path, force: bool, spec_lint: dict[st
 
     spec_words = len(re.findall(r"\S+", json.dumps(spec, ensure_ascii=False)))
     handoff_words = sum(count_words(path) for path in written)
-    all_criteria = as_list(spec.get("criteria") or spec.get("acceptance"))
-    all_boundaries = as_list(spec.get("boundaries") or spec.get("boundary_examples"))
+    all_criteria = list(as_list(spec.get("criteria") or spec.get("acceptance")))
+    all_boundaries = list(as_list(spec.get("boundaries") or spec.get("boundary_examples")))
     for lane in lanes:
         all_criteria.extend(as_list(lane.get("criteria") or lane.get("acceptance")))
         all_boundaries.extend(as_list(lane.get("boundaries") or lane.get("boundary_examples")))

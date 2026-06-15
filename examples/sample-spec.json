@@ -15,6 +15,7 @@
   "relevant_files": [
     {
       "path": "src/todos.py",
+      "lines": "1-12",
       "why": "Contains the reducer action dispatch and report helper return shape that the worker must preserve.",
       "symbols": [
         "reduce_todos",
@@ -25,6 +26,7 @@
     },
     {
       "path": "tests/test_todos.py",
+      "lines": "1-6",
       "why": "Shows the public validation shape the worker must keep rather than replacing tests to hide failures.",
       "symbols": [
         "test_unknown_action_returns_error",
@@ -35,7 +37,7 @@
     }
   ],
   "anti_patterns": [
-    "Do not invent reducer action names, report fields, or helper APIs; reuse the existing reduce_todos/build_report shape.",
+    "Do not invent reducer action names, report fields, or helper APIs; reuse the existing reduce_todos/build_report shape. Embedded excerpts may be stale, so read the live file and let it win over the excerpt.",
     "Do not edit tests to hide production failures.",
     "Do not change pyproject.toml, package metadata, or generated files.",
     "Do not report success without the configured validation command output."
