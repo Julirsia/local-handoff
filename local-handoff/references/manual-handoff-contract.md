@@ -469,6 +469,50 @@ Consistency invariants are how you catch *silent* divergence: an empty-but-valid
 
 The checker flags `integration_seam_gate_missing` (warning) when allowed paths span multiple component roots and the integration handoff has no executable end-to-end gate, `consider_integration_gate` (suggestion) for phase-split multi-lane work, and `consider_seam_consistency_invariant` when a cross-component seam states no invariant.
 
+### The gate must be runnable: write the command AND the script
+
+The gate is not documentation — the downstream runner executes it. Provide `integration_e2e` as command objects (cwd/command/expected_exit/proves), and if the seam needs more than one shell line, also deliver the script itself as a file the lanes create or that you include, so the command actually runs. Prefer the consumer's own client over hand-rolled calls, so the gate exercises the real verbs/paths.
+
+Spec fields (server + client example):
+
+```json
+"seam_contract": "HTTP routes are the contract: PUT /api/subscriptions/:id and PUT /api/expenses/:id (the client MUST use these exact verbs/paths). The dashboard's renewal window and the notifications endpoint both anchor on the server's current date (today), not the requested month.",
+"seam_invariants": [
+  "Editing a subscription via the client's update call returns 2xx (not 404) -- proves client verb/path match the server route.",
+  "GET /api/dashboard upcomingRenewals == GET /api/notifications renewals for the same user/today."
+],
+"integration_e2e": [
+  {
+    "cwd": "/abs/path/to/repo",
+    "command": "node e2e/seam.mjs",
+    "expected_exit": 0,
+    "proves": "Boots the server, signs up, exercises the client's real update verb, and asserts dashboard renewals == notifications renewals."
+  }
+]
+```
+
+Sketch of `e2e/seam.mjs` (the script the command runs; assert invariants, exit non-zero on mismatch):
+
+```js
+// 1. boot the producer (server) on a test port, fresh DB
+// 2. drive it through the CONSUMER's real interface (import the client's api module, or
+//    replicate its exact METHOD+path) -- e.g. signup, create a subscription renewing in 2 days
+// 3. assert the seam invariants:
+//    - client.subscriptionUpdate(id, {...})  -> response.ok (catches PATCH-vs-PUT 404)
+//    - dashboard.upcomingRenewals deep-equals notifications renewals (catches a divergent `today`)
+// 4. process.exit(failures ? 1 : 0)
+```
+
+### How the runner consumes the gate
+
+A handoff runner reads `integration_e2e` from the spec (place the spec where it is discoverable, e.g. `manual-handoff-spec.json` inside the package or a sibling `<name>-spec.json`) or parses the rendered "Executable Integration Gate" section of `integration-handoff.md`. It then runs the command after all lanes pass:
+
+- gate present and passes -> the seam is verified;
+- gate present and fails -> the whole run fails (the seam is genuinely broken);
+- gate missing -> the run finishes but is marked seam-UNVERIFIED, not a clean pass (strict mode can hard-fail instead).
+
+So a handoff with no `integration_e2e` is accepted but can never reach a verified-seam result. For any producer/consumer handoff, ship a real gate.
+
 ## Manual Preflight
 
 Run the checker before giving the package to the user when files were written:
