@@ -397,6 +397,106 @@ def package_dirs(root: Path) -> list[tuple[str, Path]]:
     return [(root.name, root)]
 
 
+CLIENT_ROOT_HINTS = ("web", "client", "frontend", "front-end", "ui", "mobile", "app")
+SERVER_ROOT_HINTS = ("server", "api", "backend", "service", "worker", "db", "database", "core")
+NON_COMPONENT_ROOTS = {"test", "tests", "spec", "specs", "__tests__", "e2e", "docs", "doc", "examples"}
+
+
+def section_by_keywords(markdown: str, keywords: list[str]) -> str:
+    """Return the body of the first heading whose title contains any keyword."""
+    for match in re.finditer(r"(?im)^#+\s+(.+?)\s*$", markdown):
+        title = match.group(1).lower()
+        if any(keyword in title for keyword in keywords):
+            start = match.end()
+            nxt = re.search(r"(?m)^#+\s+", markdown[start:])
+            end = start + nxt.start() if nxt else len(markdown)
+            return markdown[start:end].strip()
+    return ""
+
+
+def lane_allowed_roots(root: Path) -> set[str]:
+    """Distinct top-level allowed-path roots across all lanes (e.g. {'server','web'})."""
+    roots: set[str] = set()
+    lanes_dir = root / "lanes"
+    if not lanes_dir.exists():
+        return roots
+    for lane in sorted(lanes_dir.iterdir()):
+        if not lane.is_dir():
+            continue
+        allowed = markdown_section_text(read(lane / "01-task.md"), "Allowed Paths")
+        for token in re.findall(r"(?m)^- `?([A-Za-z0-9_./-]+)", allowed):
+            if "/" in token:
+                roots.add(token.split("/")[0])
+    return roots
+
+
+def check_integration_handoff(root: Path) -> list[dict[str, str]]:
+    """Multi-lane packages must verify the cross-lane seam with an EXECUTABLE end-to-end gate.
+
+    The benchmark failure this guards against: every lane passes in isolation (per-component
+    unit tests + build) while the seam silently diverges -- e.g. the client calls PATCH while
+    the server only implements PUT, or two endpoints anchor a date differently. Per-component
+    green plus a manual-only audit is not enough; require a command that drives the consumer
+    against the real producer end to end.
+    """
+    issues: list[dict[str, str]] = []
+    label = "integration-handoff.md"
+    path = root / label
+    body = read(path)
+    if not body.strip():
+        issues.append(issue("warning", "missing_integration_handoff",
+            "Multi-lane package has lanes/ but no integration-handoff.md to verify the cross-lane seam.", str(path)))
+        return issues
+
+    # A genuine consumer<->producer seam means two or more distinct *component* roots (excluding
+    # test/doc roots). A phase split inside one module (e.g. src/ + tests/) is not a cross-component seam.
+    roots = lane_allowed_roots(root)
+    component_roots = {r for r in roots if r.lower() not in NON_COMPONENT_ROOTS}
+    seam = len(component_roots) >= 2 or (
+        any(any(h in r for h in CLIENT_ROOT_HINTS) for r in component_roots)
+        and any(any(h in r for h in SERVER_ROOT_HINTS) for r in component_roots)
+    )
+
+    # An executable end-to-end gate is a fenced command under an end-to-end / seam / integration-gate heading.
+    gate_section = section_by_keywords(
+        body, ["integration gate", "end-to-end", "end to end", "seam verification", "seam gate"]
+    )
+    # The composer indents fenced command blocks; left-strip each line so indented fences are detected.
+    gate_dedented = "\n".join(line.lstrip() for line in gate_section.splitlines())
+    gate_commands = validation_commands(gate_dedented)
+
+    if not gate_commands:
+        message = (
+            "Multi-lane handoff has no executable end-to-end integration gate. Add an executable command "
+            "(under an 'Executable Integration Gate' / 'End-to-End' heading) that exercises the consumer "
+            "calling the producer through its real interface and asserts the result. Per-component builds and "
+            "unit tests pass independently while the seam (HTTP verb/path, function signature, shared semantics "
+            "like the meaning of 'now'/'today') can silently diverge; a manual-only audit gets skipped."
+        )
+        if seam:
+            issues.append(issue("warning", "integration_seam_gate_missing",
+                message + " Allowed paths span multiple components: " + ", ".join(sorted(component_roots)) + ".", label))
+        else:
+            issues.append(issue("suggestion", "consider_integration_gate",
+                message + " (Phase-split lanes whose shared public tests already exercise the integration may not "
+                "need a separate gate; add one if the lanes can diverge.)", label))
+
+    invariant_text = (
+        markdown_section_text(body, "Integration Checks") + "\n"
+        + section_by_keywords(body, ["consistency", "invariant"]) + "\n"
+        + gate_section
+    )
+    if seam and not has_any(invariant_text, [
+        "consistency", "invariant", "must match", "must equal", "must agree", "same result",
+        "same value", "same verb", "same route", "matches the server", "matches the producer",
+    ]):
+        issues.append(issue("suggestion", "consider_seam_consistency_invariant",
+            "State at least one cross-component consistency invariant the gate asserts (e.g. two endpoints that "
+            "must return the same underlying value, or a client call whose method+path must match the server "
+            "route it targets), so silent divergences are caught instead of looking like valid output.", label))
+    return issues
+
+
 def check(root: Path) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     if not root.exists():
@@ -421,6 +521,9 @@ def check(root: Path) -> dict[str, Any]:
 
     for label, path in package_dirs(root):
         issues.extend(check_package_dir(path, label))
+
+    if (root / "lanes").exists():
+        issues.extend(check_integration_handoff(root))
 
     status = "ok"
     if any(item["severity"] == "error" for item in issues):

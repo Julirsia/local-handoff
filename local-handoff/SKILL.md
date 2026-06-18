@@ -82,6 +82,7 @@ python3 /path/to/local-handoff/scripts/compose_manual_handoff.py \
    - Public validation must directly map to acceptance criteria.
    - Boundary examples are product requirements, not optional hints.
    - If owner-only or hidden checks exist, do not make hidden success a worker acceptance criterion. Put owner-only checks in a clearly labeled file such as `owner-audit-notes.md`, and mirror every product requirement in public acceptance or manual audit items.
+   - For producer/consumer multi-lane work (e.g. server + client), pin the shared seam once via `seam_contract` (HTTP method+path, function signatures, shared semantics like the meaning of `now`/`today`) and quote it from both lanes, then give the integration handoff an EXECUTABLE end-to-end gate (`integration_e2e`) plus a consistency invariant (`seam_invariants`) — never a manual-only audit. See "Cross-Lane Seam Contracts and Executable Integration Gates" in the contract. The checker flags `integration_seam_gate_missing` otherwise.
 
 8. Run manual preflight and self-review before final response.
    - Run the bundled checker when files were written:

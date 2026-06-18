@@ -451,6 +451,24 @@ For sequential lanes in one repo, tell the user to checkpoint accepted changes b
 
 If a compact spec has many criteria, many boundary examples, multiple unrelated allowed roots, or multiple behavior phases in one lane, split it before composition. Local-model reliability usually improves more from smaller sequential prompts than from one exhaustive prompt.
 
+## Cross-Lane Seam Contracts and Executable Integration Gates
+
+Splitting a producer and its consumer into separate lanes (for example a server API lane and a web client lane) creates a *seam*: a shared interface that neither lane verifies on its own. Benchmark failure: every lane passed in isolation (server unit tests green, client build green) while the running app was broken, because the seam silently diverged — the client called `PATCH /api/items/:id` while the server only implemented `PUT`, so every edit returned 404; and two endpoints anchored "today" differently, so the dashboard's renewal list was always empty while the notifications endpoint was correct. Per-lane green plus a manual-only audit did not catch either, and the manual audit was skipped.
+
+Two requirements close this gap:
+
+1. **Pin the seam once; reference it from both sides.** Put the shared interface in a single contract that the producer lane and the consumer lane both quote verbatim, so neither invents its own variant:
+   - HTTP: every route as METHOD + path (e.g. `PUT /api/items/:id`). The consumer excerpt must call the exact same verb and path the producer registers; do not leave the client's verbs as a vague "CRUD" comment.
+   - Modules: function name + argument meaning + return shape.
+   - Shared semantics: the meaning of any ambiguous value crossing the seam (what `now`/`today` refers to, timezone, currency units, rounding). A single parameter must not silently serve two roles (e.g. "which month to aggregate" and "now for the renewal window").
+   Use the spec field `seam_contract` (rendered into the integration handoff). For the function-signature exception to "loose on HOW": a real cross-lane interface contract IS a case where pinning signatures/verbs is correct.
+
+2. **Verify the seam with one EXECUTABLE end-to-end gate, never manual-only.** The integration handoff must include an executable command that drives the consumer against the real producer (for example: boot the server, then exercise it using the client's own API module / a script that uses the client's real HTTP verbs and paths) and asserts the result, including at least one cross-component consistency invariant. Use the spec fields `integration_e2e` (executable command list) and `seam_invariants`. A manual audit may supplement the gate but must not replace it, because per-component unit tests + a build pass independently and a manual gate gets skipped.
+
+Consistency invariants are how you catch *silent* divergence: an empty-but-valid-looking response (`[]`) is a failure only if an invariant says it must be non-empty here, or that two endpoints/functions must return the same underlying value. State at least one.
+
+The checker flags `integration_seam_gate_missing` (warning) when allowed paths span multiple component roots and the integration handoff has no executable end-to-end gate, `consider_integration_gate` (suggestion) for phase-split multi-lane work, and `consider_seam_consistency_invariant` when a cross-component seam states no invariant.
+
 ## Manual Preflight
 
 Run the checker before giving the package to the user when files were written:
@@ -504,3 +522,4 @@ Before reporting completion, verify:
 - No testability rule forces the UI onto a worse path; HTML/CSS for HUD/menus/overlays is allowed while correctness-critical logic stays pure/testable.
 - Scope & Breadth states the full intended experience so a weak worker does not ship a minimal stub.
 - For any UI scope: a separate Visual & UX Quality checklist with quantified, manual-audit targets and a reference asset is present (not just adjectives).
+- For producer/consumer multi-lane work: the shared seam (HTTP method+path, function signature, shared semantics) is pinned once and quoted by both lanes, and the integration handoff has an executable end-to-end gate plus at least one consistency invariant — not a manual-only audit.

@@ -69,6 +69,18 @@
     "Implement action branch behavior before report aggregation.",
     "Run configured validation and report evidence."
   ],
+  "seam_contract": "Both lanes share src/todos.py: reduce_todos produces the state shape that build_report consumes. Keep the return contracts identical across lanes -- reduce_todos returns (state, error) and build_report returns {total, visible_ids} -- so the report lane reads exactly what the reducer lane writes, not a separate code path.",
+  "seam_invariants": [
+    "After a clear action, build_report(reduce_todos(state, {\"type\": \"clear\"})[0]).total must equal 0 and visible_ids must be empty: the report lane must reflect the reducer lane's actual output."
+  ],
+  "integration_e2e": [
+    {
+      "cwd": "/tmp/sample-repo",
+      "command": "PYTHONPATH=. python3 -S tests/test_todos.py",
+      "expected_exit": 0,
+      "proves": "The full public suite exercises reducer output flowing into the report end to end (both lanes together), so the seam cannot pass while only one side is correct."
+    }
+  ],
   "lanes": [
     {
       "name": "reducer-actions",

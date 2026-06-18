@@ -33,6 +33,7 @@ ALLOWED_SPEC_KEYS = {
     "hidden_public_alignment",
     "in_scope",
     "integration_checks",
+    "integration_e2e",
     "integration_objective",
     "integration_validation",
     "lanes",
@@ -53,6 +54,8 @@ ALLOWED_SPEC_KEYS = {
     "repo_root",
     "scope",
     "scope_breadth",
+    "seam_contract",
+    "seam_invariants",
     "stop_conditions",
     "task_name",
     "validation_commands",
@@ -899,6 +902,7 @@ These gates preserve the benchmark-derived handoff checks without launching a ru
 - Scope & Breadth pins the full requested experience so a weak worker does not ship a minimal stub of a larger ask.
 - Constraint axis is correct: WHAT (behavior, acceptance, look-and-feel) is tight; HOW (architecture, file layout, UI technique) is left free unless a real reason forbids it. Testability rules never force UI onto a harder, worse path; keep purity for correctness-critical logic only.
 - Visual & UX Quality is a separate, quantified, manual-audit checklist for any UI scope, with a reference asset (mockup/screenshot/described density), not just adjectives.
+- Cross-lane seam: for multi-lane work, the shared interface (HTTP method+path, function signature, shared semantics like the meaning of `now`/`today`) is pinned once and referenced identically by the producer and consumer lanes, AND the integration handoff has an EXECUTABLE end-to-end gate that drives the consumer against the real producer. Per-lane green plus a manual-only audit does not prove the seam.
 
 ## Benchmark-Derived Boundary Prompts
 
@@ -916,6 +920,7 @@ These gates preserve the benchmark-derived handoff checks without launching a ru
 - Split by phase when one lane combines normalization/defaulting, core algorithm/state transition, and aggregation/rendering/persistence/reporting.
 - For action/controller work, split storage/defaulting, mutation branch families, and report/filter aggregation when feasible.
 - For final wrapper/report lanes, state which upstream lanes are already accepted and how validation covers fresh downstream output.
+- When you split a producer and its consumer into separate lanes (e.g. server API and web client), treat their shared interface as a first-class contract: pin it once, reference it from both lanes, and verify it with one executable end-to-end gate in the integration handoff rather than two independent per-lane checks.
 
 ## Weak-Worker Guardrails
 
@@ -963,6 +968,36 @@ Give the worker `05-worker-prompt.md` first for a single-lane handoff. For multi
 
 
 def render_integration(spec: dict[str, Any], lanes: list[dict[str, Any]]) -> str:
+    seam_contract = text(
+        spec.get("seam_contract"),
+        "List every interface the producer and consumer lanes share and MUST agree on, and reference this same "
+        "contract from BOTH sides so neither invents its own variant:\n"
+        "- For HTTP: each route as METHOD + path (e.g. `PUT /api/items/:id`). The client must call the exact same "
+        "verb and path the server registers (a PATCH-vs-PUT or pluralization mismatch returns 404 at runtime while "
+        "both lanes pass in isolation).\n"
+        "- For modules: each function name + argument meaning + return shape.\n"
+        "- Shared semantics: the meaning of any ambiguous value crossing the seam (e.g. what `now`/`today` refers "
+        "to, timezone, currency units, rounding), so one side does not anchor it differently than the other.",
+    )
+    seam_invariants = bullet(
+        spec.get("seam_invariants"),
+        "- Name at least one cross-component invariant the executable gate asserts, e.g. two endpoints/functions "
+        "that must return the same underlying value, or a consumer call whose METHOD+path must match the "
+        "producer route it targets. An empty-but-valid-looking response (e.g. `[]`) is a silent failure unless an "
+        "invariant says it must be non-empty here.",
+    )
+    e2e = as_list(spec.get("integration_e2e"))
+    if e2e:
+        e2e_block = validation_block(e2e)
+    else:
+        e2e_block = (
+            "FILL_BEFORE_HANDOFF: Add an executable command that drives the consumer against the real producer "
+            "end to end (e.g. boot the server, then exercise it using the client's OWN api module / a script that "
+            "uses the client's real HTTP verbs and paths) and asserts expected results, including the consistency "
+            "invariants above. A manual audit may supplement this gate but must not replace it, because a "
+            "manual-only gate gets skipped and per-component unit tests + a build do not prove the seam."
+        )
+
     return f"""# Integration Handoff
 
 Use this after upstream lanes are accepted and checkpointed.
@@ -974,6 +1009,22 @@ Use this after upstream lanes are accepted and checkpointed.
 ## Lane Dependencies
 
 {bullet([f"{lane_label(lane, idx)}: {text(lane.get('objective') or lane.get('summary'))}" for idx, lane in enumerate(lanes, 1)])}
+
+## Cross-Lane Seam Contract
+
+{seam_contract}
+
+## Cross-Component Consistency Invariants
+
+{seam_invariants}
+
+## Executable Integration Gate (consumer -> producer)
+
+This gate MUST be an executable command that exercises the real seam end to end -- the consumer calling the
+producer through its actual interface -- not a manual audit and not only per-component builds/unit tests. Each
+lane passing in isolation does NOT prove the seam.
+
+{e2e_block}
 
 ## Integration Checks
 
