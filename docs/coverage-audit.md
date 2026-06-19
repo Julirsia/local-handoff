@@ -22,7 +22,11 @@ This file maps the runner-backed batch handoff safeguards to the manual Local Ha
 - Lane split by domain.
 - Phase split by normalization/defaulting, core behavior, and downstream aggregation/rendering/persistence/reporting.
 - Checkpoint instruction for sequential lanes.
+- Canonical task tracker coverage with exactly-once lane ownership, dependency ordering, and task-ID evidence.
+- Worker-visible `manual-handoff-spec.json` for runner discovery, with owner-only notes removed.
 - Public validation commands with cwd, expected exit, and proof statement.
+- Root lint command enforcement when the repo defines one.
+- False-green runtime guard for fatal output such as `EADDRINUSE` despite exit code 0.
 - Python `PYTHONPATH=. python3 -S ...` guidance.
 - JavaScript module-type warning.
 - Hidden/owner-only checks cannot be worker acceptance criteria.
@@ -97,6 +101,18 @@ The checker implements manual equivalents of benchmark/preflight signals:
 - `consider_public_report_record_field_normalization`
 - `missing_compose_metrics`
 - `invalid_compose_metrics`
+- `canonical_task_file_missing`
+- `canonical_task_file_empty`
+- `lane_missing_task_ids`
+- `invalid_lane_dependency`
+- `duplicate_task_assignment`
+- `unknown_task_assignment`
+- `unassigned_required_tasks`
+- `root_lint_validation_missing`
+- `missing_machine_readable_spec`
+- `invalid_machine_readable_spec`
+- `missing_canonical_task_coverage`
+- `missing_false_green_runtime_guard`
 
 ## Intentionally Not Carried Over
 

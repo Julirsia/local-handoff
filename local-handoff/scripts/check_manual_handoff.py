@@ -231,6 +231,8 @@ def check_package_dir(pkg: Path, label: str) -> list[dict[str, str]]:
         issues.append(issue("warning", "missing_no_test_masking_antipattern", "Anti-patterns should forbid changing tests merely to hide production failures.", label))
     if "blocked" not in markdown_section_text(prompt, "Self-Repair Loop").lower():
         issues.append(issue("warning", "self_repair_loop_missing_blocked_exit", "Self-Repair Loop should tell the worker when to stop and report blocked.", label))
+    if "eaddrinuse" not in prompt.lower() or "exit code" not in prompt.lower():
+        issues.append(issue("warning", "missing_false_green_runtime_guard", "Worker prompt should reject fatal runtime output such as EADDRINUSE even when a command exits 0.", label))
 
     if "worker step" not in plan.lower() and "implementation plan" not in plan.lower():
         issues.append(issue("suggestion", "consider_worker_step_plan", "Add an explicit ordered worker step plan.", label))
@@ -497,6 +499,78 @@ def check_integration_handoff(root: Path) -> list[dict[str, str]]:
     return issues
 
 
+def check_machine_readable_spec(root: Path) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    spec_path = root / "manual-handoff-spec.json"
+    if not spec_path.exists():
+        if (root / "lanes").exists():
+            issues.append(issue("warning", "missing_machine_readable_spec",
+                "Multi-lane package should include manual-handoff-spec.json so runners can discover task assignments and integration_e2e without parsing prose.", str(spec_path)))
+        return issues
+    try:
+        spec = json.loads(read(spec_path))
+    except json.JSONDecodeError as exc:
+        return [issue("error", "invalid_machine_readable_spec", f"manual-handoff-spec.json is invalid JSON: {exc}", str(spec_path))]
+    if not isinstance(spec, dict):
+        return [issue("error", "invalid_machine_readable_spec", "manual-handoff-spec.json root must be an object.", str(spec_path))]
+
+    canonical = spec.get("canonical_task_file")
+    lanes = [lane for lane in spec.get("lanes", []) if isinstance(lane, dict)] if isinstance(spec.get("lanes", []), list) else []
+    if canonical:
+        assignments = []
+        for lane in lanes:
+            values = lane.get("task_ids", [])
+            assignments.extend(values if isinstance(values, list) else [values])
+        if not lanes:
+            values = spec.get("task_ids", [])
+            assignments.extend(values if isinstance(values, list) else [values])
+        normalized = [str(value).strip() for value in assignments if str(value).strip()]
+        duplicates = sorted({value for value in normalized if normalized.count(value) > 1})
+        if duplicates:
+            issues.append(issue("error", "duplicate_task_assignment", "Canonical task IDs must be owned exactly once: " + ", ".join(duplicates), str(spec_path)))
+        if not normalized:
+            issues.append(issue("error", "missing_canonical_task_assignments", "canonical_task_file is configured but no task_ids are assigned.", str(spec_path)))
+        for index, lane in enumerate(lanes, 1):
+            values = lane.get("task_ids", [])
+            if not (values if isinstance(values, list) else [values]):
+                issues.append(issue("error", "lane_missing_task_ids", f"Lane {index} has no canonical task IDs.", str(spec_path)))
+        if lanes and "canonical task coverage" not in read(root / "integration-handoff.md").lower():
+            issues.append(issue("error", "missing_canonical_task_coverage", "Integration handoff must contain a Canonical Task Coverage matrix and unchecked-task completion rule.", "integration-handoff.md"))
+
+        repo_value = spec.get("repo") or spec.get("repo_root") or spec.get("working_directory")
+        canonical_path = Path(str(canonical)).expanduser()
+        if not canonical_path.is_absolute() and repo_value:
+            canonical_path = Path(str(repo_value)).expanduser() / canonical_path
+        if canonical_path.is_file():
+            tasks = {}
+            for line in read(canonical_path).splitlines():
+                match = re.match(r"^\s*-\s*\[([ xX])\]\s+(T\d+)\b", line)
+                if match:
+                    tasks[match.group(2)] = match.group(1).lower() == "x"
+            required = {task_id for task_id, complete in tasks.items() if not complete}
+            unknown = sorted(set(normalized) - set(tasks))
+            missing = sorted(required - set(normalized))
+            if unknown:
+                issues.append(issue("error", "unknown_task_assignment", "Assigned task IDs are absent from the canonical tracker: " + ", ".join(unknown), str(spec_path)))
+            if missing:
+                issues.append(issue("error", "unassigned_required_tasks", "Unchecked canonical tasks remain unassigned: " + ", ".join(missing), str(spec_path)))
+        else:
+            issues.append(issue("error", "canonical_task_file_missing", f"Canonical task file is missing or unreadable: {canonical_path}", str(spec_path)))
+
+    repo = spec.get("repo") or spec.get("repo_root") or spec.get("working_directory")
+    package_json = Path(str(repo)).expanduser() / "package.json" if repo else None
+    if package_json and package_json.is_file():
+        try:
+            scripts = json.loads(read(package_json)).get("scripts", {})
+        except (json.JSONDecodeError, AttributeError):
+            scripts = {}
+        if isinstance(scripts, dict) and scripts.get("lint"):
+            serialized = json.dumps(spec).lower()
+            if not re.search(r"(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?lint\b", serialized):
+                issues.append(issue("error", "root_lint_validation_missing", "Repo defines a root lint script, but the machine-readable handoff has no lint validation command.", str(spec_path)))
+    return issues
+
+
 def check(root: Path) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     if not root.exists():
@@ -524,6 +598,7 @@ def check(root: Path) -> dict[str, Any]:
 
     if (root / "lanes").exists():
         issues.extend(check_integration_handoff(root))
+    issues.extend(check_machine_readable_spec(root))
 
     status = "ok"
     if any(item["severity"] == "error" for item in issues):

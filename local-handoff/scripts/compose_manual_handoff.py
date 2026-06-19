@@ -24,7 +24,9 @@ ALLOWED_SPEC_KEYS = {
     "constraints",
     "context",
     "conventions",
+    "canonical_task_file",
     "criteria",
+    "depends_on",
     "dependency_policy",
     "execution_plan",
     "files",
@@ -58,6 +60,7 @@ ALLOWED_SPEC_KEYS = {
     "seam_invariants",
     "stop_conditions",
     "task_name",
+    "task_ids",
     "validation_commands",
     "visual_acceptance",
     "worker_capability",
@@ -110,6 +113,33 @@ def text(value: Any, default: str = "Not specified.") -> str:
     if isinstance(value, str):
         return value.strip() or default
     return str(value)
+
+
+def task_ids(value: Any) -> list[str]:
+    return [text(item, "").strip() for item in as_list(value) if text(item, "").strip()]
+
+
+def canonical_task_path(spec: dict[str, Any]) -> Path | None:
+    raw = text(spec.get("canonical_task_file"), "")
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    repo = text(spec.get("repo") or spec.get("repo_root") or spec.get("working_directory"), "")
+    return Path(repo).expanduser() / path if repo else path
+
+
+def canonical_tasks(spec: dict[str, Any]) -> dict[str, bool] | None:
+    path = canonical_task_path(spec)
+    if path is None or not path.is_file():
+        return None
+    tasks: dict[str, bool] = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = re.match(r"^\s*-\s*\[([ xX])\]\s+(T\d+)\b", line)
+        if match:
+            tasks[match.group(2)] = match.group(1).lower() == "x"
+    return tasks
 
 
 def bullet(items: Any, default: str = "- Not specified.") -> str:
@@ -470,8 +500,107 @@ def lint_spec_object(
     return errors, warnings
 
 
+def validation_command_strings(value: Any) -> list[str]:
+    commands: list[str] = []
+    for item in as_list(value):
+        if isinstance(item, dict):
+            command = text(item.get("command"), "")
+        else:
+            command = text(item, "")
+        if command:
+            commands.append(command)
+    return commands
+
+
+def lint_task_coverage(spec: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    errors: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    path = canonical_task_path(spec)
+    if path is not None:
+        tasks = canonical_tasks(spec)
+        if tasks is None:
+            errors.append({
+                "severity": "error",
+                "code": "canonical_task_file_missing",
+                "path": "$.canonical_task_file",
+                "message": f"Canonical task file does not exist or is unreadable: {path}",
+            })
+        elif not tasks:
+            errors.append({
+                "severity": "error",
+                "code": "canonical_task_file_empty",
+                "path": "$.canonical_task_file",
+                "message": f"Canonical task file contains no '- [ ] T###' or '- [x] T###' entries: {path}",
+            })
+        else:
+            lanes = [lane for lane in as_list(spec.get("lanes")) if isinstance(lane, dict)]
+            assignments = task_ids(spec.get("task_ids")) if not lanes else [task_id for lane in lanes for task_id in task_ids(lane.get("task_ids"))]
+            duplicates = sorted({task_id for task_id in assignments if assignments.count(task_id) > 1})
+            unknown = sorted(set(assignments) - set(tasks))
+            required = {task_id for task_id, complete in tasks.items() if not complete}
+            missing = sorted(required - set(assignments))
+            already_complete = sorted({task_id for task_id in assignments if tasks.get(task_id) is True})
+            if lanes:
+                prior_dependencies: set[str] = set()
+                for index, lane in enumerate(lanes, 1):
+                    if not task_ids(lane.get("task_ids")):
+                        errors.append({
+                            "severity": "error",
+                            "code": "lane_missing_task_ids",
+                            "path": f"$.lanes[{index}]",
+                            "message": "Every lane must own one or more canonical task IDs when canonical_task_file is configured.",
+                        })
+                    dependencies = task_ids(lane.get("depends_on"))
+                    invalid_dependencies = sorted(set(dependencies) - prior_dependencies)
+                    if invalid_dependencies:
+                        errors.append({
+                            "severity": "error",
+                            "code": "invalid_lane_dependency",
+                            "path": f"$.lanes[{index}].depends_on",
+                            "message": "Lane dependencies must reference an earlier lane name/label/task ID: " + ", ".join(invalid_dependencies),
+                        })
+                    name = text(lane.get("name") or lane.get("task_name") or f"lane-{index}")
+                    slug = slugify(name)
+                    prior_dependencies.update({name, slug, f"{index:02d}-{slug}", *task_ids(lane.get("task_ids"))})
+            if duplicates:
+                errors.append({"severity": "error", "code": "duplicate_task_assignment", "path": "$.lanes", "message": "Canonical task IDs must be assigned exactly once; duplicates: " + ", ".join(duplicates)})
+            if unknown:
+                errors.append({"severity": "error", "code": "unknown_task_assignment", "path": "$.lanes", "message": "Assigned task IDs are absent from the canonical task file: " + ", ".join(unknown)})
+            if missing:
+                errors.append({"severity": "error", "code": "unassigned_required_tasks", "path": "$.lanes", "message": "Unchecked canonical tasks must all be assigned before composition: " + ", ".join(missing)})
+            if already_complete:
+                warnings.append({"severity": "warning", "code": "completed_task_reassigned", "path": "$.lanes", "message": "Already checked canonical tasks were assigned again: " + ", ".join(already_complete)})
+
+    repo = text(spec.get("repo") or spec.get("repo_root") or spec.get("working_directory"), "")
+    package_json = Path(repo).expanduser() / "package.json" if repo else None
+    if package_json and package_json.is_file():
+        try:
+            scripts = json.loads(package_json.read_text(encoding="utf-8")).get("scripts", {})
+        except (json.JSONDecodeError, OSError, AttributeError):
+            scripts = {}
+        if isinstance(scripts, dict) and scripts.get("lint"):
+            commands = validation_command_strings(spec.get("validation_commands") or spec.get("public_validation"))
+            commands += validation_command_strings(spec.get("integration_validation"))
+            commands += validation_command_strings(spec.get("integration_e2e"))
+            for lane in as_list(spec.get("lanes")):
+                if isinstance(lane, dict):
+                    commands += validation_command_strings(lane.get("validation_commands") or lane.get("public_validation"))
+            if not any(re.search(r"(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?lint\b", command) for command in commands):
+                errors.append({
+                    "severity": "error",
+                    "code": "root_lint_validation_missing",
+                    "path": "$.validation_commands",
+                    "message": "Repo package.json defines a root lint script, but no handoff validation command runs it.",
+                })
+    return errors, warnings
+
+
 def lint_spec(spec: dict[str, Any]) -> dict[str, Any]:
     errors, warnings = lint_spec_object(spec, label="$", allowed_keys=ALLOWED_SPEC_KEYS)
+    # Canonical task coverage and repo-supported validation are cross-lane contracts.
+    coverage_errors, coverage_warnings = lint_task_coverage(spec)
+    errors.extend(coverage_errors)
+    warnings.extend(coverage_warnings)
     if not text(spec.get("objective"), "") and not as_list(spec.get("lanes")):
         errors.append(
             {
@@ -549,6 +678,7 @@ def critical_first() -> str:
 - Do not edit forbidden paths or broaden scope.
 - Implement every numbered acceptance criterion and every boundary example literally.
 - Run only the configured validation commands as blocking evidence unless the user adds more.
+- A zero exit code is not a pass when output contains a fatal runtime signal such as `EADDRINUSE`, an unhandled rejection, a fatal error, or a test timeout. Stop conflicting processes and rerun against the intended fresh instance.
 - Stop and report `blocked` if requirements conflict, required files are missing, validation cannot run, or secrets/unsafe commands are needed.
 """
 
@@ -613,6 +743,15 @@ def render_docs(spec: dict[str, Any], lane: dict[str, Any] | None = None) -> dic
         data.get("reference_assets"),
         "No reference was supplied. For a visual-heavy deliverable, add a concrete quality bar here: an attached image, a link to a similar product, or a written description of the intended density, so the worker is not guessing the bar.",
     )
+    canonical_file = text(data.get("canonical_task_file"), "No canonical task tracker configured.")
+    assigned_tasks = bullet(task_ids(data.get("task_ids")), "- No canonical task IDs assigned.")
+    dependencies = bullet(data.get("depends_on"), "- No prior lane dependencies.")
+    task_completion_rule = (
+        "Treat the canonical task tracker as reporting state, not proof. Report evidence for every assigned task ID. "
+        "Do not check an item merely because code was written: it is complete only after its mapped validation passes. "
+        "Do not edit the tracker unless it is explicitly inside Allowed Paths; otherwise leave checkbox reconciliation "
+        "to the human/final reviewer."
+    )
 
     return {
         "00-context.md": f"""# Context
@@ -646,6 +785,16 @@ Absolute path: `{repo}`
 ## Objective
 
 {objective}
+
+## Canonical Task Assignment
+
+- Tracker: `{canonical_file}`
+- Assigned task IDs:
+{assigned_tasks}
+- Dependencies:
+{dependencies}
+
+{task_completion_rule}
 
 ## Scope & Breadth
 
@@ -715,6 +864,13 @@ These are product requirements verified by manual audit, kept as a separate chec
 
 Follow this order. Do not infer a broader plan from nearby code.
 
+## Canonical Task Assignment
+
+- Tracker: `{canonical_file}`
+{assigned_tasks}
+
+{task_completion_rule}
+
 {implementation_steps}
 
 ## Worker Capability
@@ -752,6 +908,7 @@ Configured worker capability: `{worker_capability}`.
 ## Public Commands
 
 Run from the stated working directory.
+Treat fatal runtime output (`EADDRINUSE`, unhandled rejection, fatal error, timeout) as failure even when the shell exits 0; rerun with an isolated port/process and fresh state.
 
 {validation}
 
@@ -779,6 +936,16 @@ You are the implementation worker for this manually delegated task. Modify files
 ## Objective
 
 {objective}
+
+## Canonical Task Assignment
+
+- Tracker: `{canonical_file}`
+- Assigned task IDs:
+{assigned_tasks}
+- Dependencies:
+{dependencies}
+
+{task_completion_rule}
 
 ## Scope & Breadth
 
@@ -857,6 +1024,8 @@ Validation:
 Acceptance evidence:
 - AC1: ...
 - AC2: ...
+Canonical task evidence:
+- T###: <validation or observable evidence>
 Boundary evidence:
 - ...
 Notes:
@@ -872,6 +1041,7 @@ Use this checklist for a human or second-agent read-only audit.
 - Every acceptance criterion has direct evidence.
 - Every boundary example was implemented literally or is explicitly blocked.
 - Public validation ran from the stated working directory.
+- Validation output contains no fatal runtime signal hidden behind exit code 0 (`EADDRINUSE`, unhandled rejection, fatal error, timeout).
 - Tests were not edited to hide production failures.
 - Dependencies, lockfiles, package metadata, generated files, and formatting churn were avoided unless explicitly allowed.
 - Final worker response reports unresolved blockers, assumptions, and validation output.
@@ -934,6 +1104,23 @@ These gates preserve the benchmark-derived handoff checks without launching a ru
 
 def lane_label(lane: dict[str, Any], idx: int) -> str:
     return f"{idx:02d}-{slugify(text(lane.get('name') or lane.get('task_name') or f'lane-{idx}'))}"
+
+
+def render_task_coverage(spec: dict[str, Any], lanes: list[dict[str, Any]]) -> str:
+    canonical_file = text(spec.get("canonical_task_file"), "No canonical task tracker configured.")
+    rows = ["| Task ID | Owning lane | Depends on |", "| --- | --- | --- |"]
+    if lanes:
+        for idx, lane in enumerate(lanes, 1):
+            owner = lane_label(lane, idx)
+            dependencies = ", ".join(task_ids(lane.get("depends_on"))) or "none"
+            for task_id in task_ids(lane.get("task_ids")):
+                rows.append(f"| {task_id} | {owner} | {dependencies} |")
+    else:
+        for task_id in task_ids(spec.get("task_ids")):
+            rows.append(f"| {task_id} | single lane | none |")
+    if len(rows) == 2:
+        rows.append("| none | not configured | none |")
+    return "\n".join([f"Canonical tracker: `{canonical_file}`", "", *rows])
 
 
 def render_readme(spec: dict[str, Any], lanes: list[dict[str, Any]]) -> str:
@@ -1010,6 +1197,12 @@ Use this after upstream lanes are accepted and checkpointed.
 
 {bullet([f"{lane_label(lane, idx)}: {text(lane.get('objective') or lane.get('summary'))}" for idx, lane in enumerate(lanes, 1)])}
 
+## Canonical Task Coverage
+
+{render_task_coverage(spec, lanes)}
+
+Before declaring integration complete, require evidence for every assigned task ID and reconcile the canonical tracker. Any unchecked required task remains blocking. A checkbox is not evidence by itself.
+
 ## Cross-Lane Seam Contract
 
 {seam_contract}
@@ -1023,6 +1216,8 @@ Use this after upstream lanes are accepted and checkpointed.
 This gate MUST be an executable command that exercises the real seam end to end -- the consumer calling the
 producer through its actual interface -- not a manual audit and not only per-component builds/unit tests. Each
 lane passing in isolation does NOT prove the seam.
+
+Treat fatal runtime output (`EADDRINUSE`, unhandled rejection, fatal error, timeout) as a failed gate even if the command exits 0. Use an isolated port and fresh process/state so a stale service cannot produce a false green.
 
 {e2e_block}
 
@@ -1052,8 +1247,11 @@ def compose(spec: dict[str, Any], out_dir: Path, force: bool, spec_lint: dict[st
 
     lanes = [lane for lane in as_list(spec.get("lanes")) if isinstance(lane, dict)]
     write_file(out_dir / "README.md", render_readme(spec, lanes))
+    runner_spec = dict(spec)
+    runner_spec.pop("owner_audit_notes", None)
+    write_file(out_dir / "manual-handoff-spec.json", json.dumps(runner_spec, indent=2, ensure_ascii=False))
 
-    written: list[Path] = [out_dir / "README.md"]
+    written: list[Path] = [out_dir / "README.md", out_dir / "manual-handoff-spec.json"]
     if lanes:
         write_file(out_dir / "integration-handoff.md", render_integration(spec, lanes))
         written.append(out_dir / "integration-handoff.md")

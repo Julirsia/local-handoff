@@ -16,6 +16,8 @@ Common spec fields:
 {
   "task_name": "short task name",
   "repo": "/absolute/path/to/repo",
+  "canonical_task_file": "specs/001-feature/tasks.md",
+  "task_ids": ["T001", "T002"],
   "objective": "one concrete end state",
   "context": "repo and behavior context",
   "allowed_paths": ["src/example.py"],
@@ -77,7 +79,7 @@ Common spec fields:
 }
 ```
 
-For multi-lane work, add `lanes`. Each lane may override `objective`, `allowed_paths`, `forbidden_paths`, `criteria`, `boundaries`, `validation_commands`, and `worker_steps`. Keep shared repo context at the top level.
+For multi-lane work, add `lanes`. Each lane may override `objective`, `allowed_paths`, `forbidden_paths`, `criteria`, `boundaries`, `validation_commands`, `worker_steps`, `task_ids`, and `depends_on`. Keep shared repo context at the top level.
 
 The composer writes `compose-metrics.json` with spec word count, generated handoff word count, expansion ratio, lane count, acceptance criterion count, boundary example count, complex logic signals, and generated file list. Use it to notice whether a compact spec is becoming too broad and should be split.
 
@@ -156,6 +158,7 @@ For a single-lane task, create:
 ```text
 <task-name>-handoff/
   README.md
+  manual-handoff-spec.json
   00-context.md
   01-task.md
   02-acceptance.md
@@ -173,6 +176,7 @@ For multi-lane work, create:
 ```text
 <task-name>-handoff/
   README.md
+  manual-handoff-spec.json
   integration-handoff.md
   lanes/
     01-<lane-name>/
@@ -451,6 +455,20 @@ For sequential lanes in one repo, tell the user to checkpoint accepted changes b
 
 If a compact spec has many criteria, many boundary examples, multiple unrelated allowed roots, or multiple behavior phases in one lane, split it before composition. Local-model reliability usually improves more from smaller sequential prompts than from one exhaustive prompt.
 
+## Canonical Task Ownership
+
+When a design workflow already produced `specs/**/tasks.md` (for example after `speckit-tasks`), that file is the canonical implementation scope. Do not create a parallel task plan that can drift from it.
+
+- Set `canonical_task_file` to the repo-relative or absolute tracker path.
+- Assign each unchecked required task ID to exactly one lane with `task_ids`.
+- Express lane prerequisites with `depends_on`; order lanes topologically and stop if an upstream lane is blocked.
+- The composer rejects unknown IDs, duplicate ownership, lanes without IDs, and any unchecked canonical task left unassigned.
+- Each worker prompt must request evidence by assigned task ID. A checked box is reporting state, not proof.
+- Workers may update the tracker only when it is explicitly in Allowed Paths and the task's mapped validation passed. Otherwise the human/final reviewer reconciles checkboxes after reviewing evidence.
+- The integration handoff must contain a Canonical Task Coverage matrix and treat any unchecked required task as blocking completion.
+
+Always keep the generated `manual-handoff-spec.json` in the package. It is the machine-readable source for lane ownership, dependencies, and executable integration gates. The composer removes `owner_audit_notes` from this worker-visible copy; keep private checks only in `owner-audit-notes.md`.
+
 ## Cross-Lane Seam Contracts and Executable Integration Gates
 
 Splitting a producer and its consumer into separate lanes (for example a server API lane and a web client lane) creates a *seam*: a shared interface that neither lane verifies on its own. Benchmark failure: every lane passed in isolation (server unit tests green, client build green) while the running app was broken, because the seam silently diverged — the client called `PATCH /api/items/:id` while the server only implemented `PUT`, so every edit returned 404; and two endpoints anchored "today" differently, so the dashboard's renewal list was always empty while the notifications endpoint was correct. Per-lane green plus a manual-only audit did not catch either, and the manual audit was skipped.
@@ -525,6 +543,9 @@ python3 /path/to/local-handoff/scripts/check_manual_handoff.py \
 
 Fix `error` results before delivery. Treat warnings and suggestions as handoff design feedback:
 
+- `canonical_task_file_missing`, `canonical_task_file_empty`, `lane_missing_task_ids`
+- `duplicate_task_assignment`, `unknown_task_assignment`, `unassigned_required_tasks`
+- `root_lint_validation_missing`, `missing_machine_readable_spec`, `missing_false_green_runtime_guard`
 - `missing_public_evidence_matrix`, `missing_boundary_examples`, `missing_public_boundary_assertion_checklist`
 - `missing_phase_decomposition_rationale`, `missing_hidden_public_alignment`
 - `hidden_success_as_worker_acceptance`, `hidden_output_shape_overreach`, `runner_artifact_reference`
@@ -559,8 +580,11 @@ Before reporting completion, verify:
 - Phase Decomposition Rationale is present and matches the package shape.
 - Hidden/Public Alignment is present and does not hide product requirements from public acceptance/manual audit.
 - Validation commands include cwd and expected exit behavior.
+- A repo root `lint` script is included in public validation when present.
+- Fatal runtime output such as `EADDRINUSE`, unhandled rejection, fatal error, or timeout fails validation even if exit code is 0; E2E uses an isolated fresh process/state.
 - Stop conditions are clear.
 - Multi-lane dependencies and checkpoint expectations are clear.
+- If a canonical task tracker exists, every unchecked required task is assigned exactly once, task evidence is reported by ID, and the integration handoff blocks on unchecked required tasks.
 - Owner-only material, if any, is clearly separated from worker-visible material.
 - Constraints are tight on WHAT (behavior, look-and-feel, acceptance) and loose on HOW (architecture, file layout, UI technique); no needless function-signature or architecture mandates.
 - No testability rule forces the UI onto a worse path; HTML/CSS for HUD/menus/overlays is allowed while correctness-critical logic stays pure/testable.

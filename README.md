@@ -11,6 +11,7 @@ From a compact JSON spec, the composer expands a manual handoff package:
 ```text
 <task>-handoff/
   README.md
+  manual-handoff-spec.json
   00-context.md
   01-task.md
   02-acceptance.md
@@ -40,6 +41,9 @@ The skill carries the handoff-quality checks learned from external batch benchma
 - Spec lint before composition, so typos such as `critera` fail before creating a polished but incomplete package.
 - Embedded relevant code excerpts for target functions, types, helper APIs, and tests when local workers may not explore the repo reliably.
 - Worker capability guidance (`small`, `medium`, `large`), explicit anti-patterns, and a bounded self-repair loop.
+- Canonical `tasks.md` coverage: every unchecked required task is assigned to exactly one lane, dependencies are explicit, and completion requires evidence by task ID.
+- Root `lint` enforcement when the repository exposes it, plus false-green protection for fatal runtime output such as `EADDRINUSE` hidden behind exit code 0.
+- A copied `manual-handoff-spec.json` so downstream runners can discover lane ownership and `integration_e2e` directly.
 
 Runner-only result collection and final audit artifacts are intentionally excluded.
 
@@ -69,6 +73,8 @@ Give `/tmp/sample-handoff/lanes/<lane>/05-worker-prompt.md` or `/tmp/sample-hand
 {
   "task_name": "short task name",
   "repo": "/absolute/path/to/repo",
+  "canonical_task_file": "specs/001-feature/tasks.md",
+  "task_ids": ["T001", "T002"],
   "objective": "one concrete end state",
   "context": "repo and behavior context",
   "allowed_paths": ["src/example.py"],
@@ -131,7 +137,7 @@ Give `/tmp/sample-handoff/lanes/<lane>/05-worker-prompt.md` or `/tmp/sample-hand
 }
 ```
 
-Add `lanes` for sequential smaller handoffs. Each lane may override objective, allowed paths, forbidden paths, criteria, boundaries, validation commands, and worker steps.
+Add `lanes` for sequential smaller handoffs. Each lane may override objective, allowed paths, forbidden paths, criteria, boundaries, validation commands, worker steps, `task_ids`, and `depends_on`. When `canonical_task_file` is set, all unchecked tasks must be assigned exactly once before composition succeeds.
 
 Use `relevant_files` selectively. Excerpts cost frontier tokens during handoff creation, but they usually save more total work when a local worker would otherwise hallucinate APIs, miss existing return shapes, or repeatedly fail validation. For `worker_capability: "small"`, keep most lanes to five or fewer excerpts and split the task when more code context is required.
 
